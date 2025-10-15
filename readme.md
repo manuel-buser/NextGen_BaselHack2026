@@ -1,4 +1,4 @@
-# BaselHack 2024
+# BaselHack Code Repo Template
 
 This is the template repository, which makes our lives (and especially the lives of the jury) easier,
 if you follow our structure.
