@@ -1,3 +1,7 @@
 .venv/
 __pycache__/
 *.pyc
+*.pt
+runs/
+# Annotated outputs may show people or licence plates - keep them local
+data/out/
