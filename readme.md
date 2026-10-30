@@ -1,17 +1,50 @@
-# BaselHack Code Repo Template
+# Find my Bike Slot
 
-This is the template repository, which makes our lives (and especially the lives of the jury) easier,
-if you follow our structure.
+**Team NextGen** – BaselHack 2026
+**Challenge:** Find my Bike Slot (Endress+Hauser)
+**Tags:** #image recognition, #embedded
 
-## Explanation
+## Challenge
 
-Please make sure that everything, that is code related, goes into `code` directory.
+How might we help employees quickly find an available bicycle parking slot at our company site?
+Bicycle parking areas can become crowded, and employees do not know where free slots are available before arriving.
+We explore a digital, physical, or combined solution that makes bicycle parking more convenient, efficient, and transparent.
 
-If you have documentation about the code (e.g. UML Diagrams, a readme etc.), that should go into the `documentation` directory.
+### Nice-to-haves
+- Real-time or estimated slot availability
+- Directions to available parking
+- A simple mobile or web interface
+- Privacy friendly
+- A prototype (with sensors even?)
 
-If you have assets (like videos, presentations etc.), this can go into the `assets` directory.
+### No-Gos
+- Storing faces, license plates or other personal data
+- Identifying or tracking individual persons
 
-You can use the MIT license in this template. Make sure to adjust the copy right holders in the placeholder `<copyright holder>` and add every team member to it.
-You are also free to choose any other license - depending on the consensus of your team.
+### Resources
+- 10x ESP32 cameras with board
+- Reference images of the parking slots
+- 100 CHF for AI tools (LLM providers etc.) per Endress team
 
-Thanks a lot!
+## Team
+
+| Name |
+|------|
+| Dennis Xhabrahimi |
+| Jevin Jiji Thaiparampil |
+| Jiri Käser |
+| Manuel Buser |
+
+## Repository structure
+
+- `code/` – all code (firmware, image recognition, web/mobile interface)
+- `documentation/` – diagrams, architecture, code-related docs
+- `assets/` – videos, presentations, images
+
+## Solution
+
+_To be filled in: approach, architecture, how to run._
+
+## License
+
+MIT – see [license.txt](license.txt).
