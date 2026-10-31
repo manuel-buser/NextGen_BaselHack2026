@@ -17,7 +17,9 @@ import httpx
 from fastapi import FastAPI
 
 from .poller import describe
-from .state import FREE, TAKEN, UNSURE, Rack, VisionSource
+from .state import FREE, TAKEN, Rack, VisionSource
+
+UNSURE = "unknown"  # the service has no decision for the slot
 
 log = logging.getLogger(__name__)
 STATUS_TIMEOUT_S = 5.0

@@ -14,6 +14,8 @@ services:
       # racks with a vision block: poll interval and the token the vision service must send when it pushes
       VISION_POLL_S: ${VISION_POLL_S:-3}
       VISION_TOKEN: ${VISION_TOKEN:-}
+      # 0 stops polling the camera blocks in the racks file, for a demo without the real camera
+      CAMERA_PULL: ${CAMERA_PULL:-1}
       # free counts over time; ./data keeps them across restarts
       HISTORY_FILE: /app/data/history.json
       # local clock for the predictions (container default is UTC)

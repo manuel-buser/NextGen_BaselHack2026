@@ -13,7 +13,7 @@ import yaml
 from .config import Settings
 from .history import History
 
-TAKEN, FREE, UNSURE = "taken", "free", "unsure"
+TAKEN, FREE = "taken", "free"
 
 
 class Slot:
@@ -216,6 +216,7 @@ class Rack:
         layout: dict | None = None,
         pull: PullCamera | None = None,
         vision: VisionSource | None = None,
+        group: str | None = None,
     ) -> None:
         self.id = rack_id
         self.name = name
@@ -228,12 +229,12 @@ class Rack:
         self.vision = vision  # the vision service keeps this rack's camera and decides its spaces (see vision_from_yaml)
         self.vision_seen: str | None = None  # updated_at of the last status taken from the service: a new one is a new frame
         self.vision_state: dict | None = None  # the service's own view of the rack, shown on the admin page
+        self.group = group  # the location this rack is a part of on the user page, or None: shown on its own
         self.slots: dict[int, Slot] = {}
         self.counts: deque[int] = deque(maxlen=window)  # count mode: free spaces observed
         self.mode: str | None = None  # "slots" or "count", set by the first detector result
         self.camera = Camera()
         self.last_result_at: float | None = None
-        self.demo_clock: datetime | None = None  # demo racks only: the driver's simulated time of the latest picture
 
     def apply(self, result: dict, settings: Settings, now: float) -> None:
         slots = result.get("slots")
@@ -282,6 +283,21 @@ class Rack:
         return "ok"
 
 
+class Location:
+    """The racks with the same `group` in the racks file: one place, so the user page shows them as one entry."""
+
+    def __init__(self, name: str, parts: list[Rack]) -> None:
+        self.id = self.name = name
+        self.parts = parts
+        self.capacity = sum(part.capacity for part in parts)
+        placed = [part.location for part in parts if part.location]
+        self.location = {key: sum(p[key] for p in placed) / len(placed) for key in ("lat", "lng")} if placed else None
+
+    def status(self, settings: Settings, now: float) -> str:
+        states = {part.status(settings, now) for part in self.parts}
+        return next((state for state in ("ok", "starting", "stale") if state in states), "unknown")
+
+
 class Store:
     def __init__(self, racks: list[Rack], settings: Settings, places: list[dict] | None = None) -> None:
         self.racks = {rack.id: rack for rack in racks}
@@ -290,6 +306,12 @@ class Store:
         self.detector = DetectorHealth()
         self.started_at = time.time()
         self.history = History(settings.history_file)
+        groups: dict[str, list[Rack]] = {}
+        for rack in racks:
+            if rack.group:
+                groups.setdefault(rack.group, []).append(rack)
+        self.locations = {name: Location(name, parts) for name, parts in groups.items()}
+        self.history.groups = {name: [part.id for part in parts] for name, parts in groups.items()}
 
     @classmethod
     def from_yaml(cls, path: str, settings: Settings) -> "Store":
@@ -312,11 +334,15 @@ class Store:
             rack_id, capacity = str(e["id"]), int(e["capacity"])
             layout = layout_from_yaml(e.get("layout"), capacity, rack_id)
             pull = camera_from_yaml(e.get("camera"), rack_id)
+            group = str(e["group"]) if e.get("group") else None
             vision = vision_from_yaml(e.get("vision"), rack_id, settings.vision_poll_s)
             if vision and (pull or demo):
                 raise ValueError(f"rack {rack_id}: vision cannot be combined with camera or demo")
             window = 1 if vision else settings.free_after_clean  # the vision service has smoothed its states already
-            racks.append(Rack(rack_id, str(e["name"]), capacity, window, location, demo, layout, pull, vision))
+            racks.append(Rack(rack_id, str(e["name"]), capacity, window, location, demo, layout, pull, vision, group))
+        clashes = {rack.group for rack in racks} & {rack.id for rack in racks}
+        if clashes:
+            raise ValueError(f"group {sorted(clashes)[0]!r} is also a rack id; the user page needs one name per entry")
         return cls(racks, settings, places)
 
     def note_alive(self, rack: Rack, report: dict, node_id: str | None, now: float, source: str) -> None:
@@ -343,13 +369,10 @@ class Store:
         rack.camera.last_error = message
         rack.camera.last_error_at = now
 
-    def apply_detection(
-        self, rack: Rack, result: dict, latency_ms: float, now: float, demo_clock: datetime | None = None, source: str = "detector"
-    ) -> None:
+    def apply_detection(self, rack: Rack, result: dict, latency_ms: float, now: float, source: str = "detector") -> None:
         rack.apply(result, self.settings, now)
-        rack.demo_clock = demo_clock if rack.demo else None  # a real rack always runs on the real clock
         if rack.status(self.settings, now) == "ok":
-            self.history.record(rack.id, self.history.moment(rack, now), rack.free, rack.capacity)
+            self.history.record(rack.id, datetime.fromtimestamp(now), rack.free, rack.capacity)
         if rack.demo or source == "vision":  # the stand-in or the vision service answered: nothing about the detector
             return
         self.detector.last_ok_at = now
@@ -360,8 +383,47 @@ class Store:
         self.detector.last_error = message
         self.detector.last_error_at = now
 
-    def rack_view(self, rack: Rack, now: float) -> dict:
+    def free_now(self, rack: Rack | Location, now: float) -> int | None:
+        """Free spaces with live data; a location adds up its live racks (one without live data adds none)."""
+        if isinstance(rack, Location):
+            live = [free for free in (self.free_now(part, now) for part in rack.parts) if free is not None]
+            return sum(live) if live else None
+        return rack.free if rack.status(self.settings, now) == "ok" else None
+
+    def public_view(self, now: float) -> list[dict]:
+        """What the user page lists: each rack on its own, or its location in the place of the location's first rack."""
+        views, shown = [], set()
+        for rack in self.racks.values():
+            if rack.group is None:
+                views.append(self.rack_view(rack, now))
+            elif rack.group not in shown:
+                shown.add(rack.group)
+                views.append(self.location_view(self.locations[rack.group], now))
+        return views
+
+    def location_view(self, loc: Location, now: float) -> dict:
+        parts = [self.rack_view(part, now, forecast=False) for part in loc.parts]
+        seen = [part.last_result_at for part in loc.parts if part.last_result_at is not None]
         return {
+            "id": loc.id,
+            "name": loc.name,
+            "capacity": loc.capacity,
+            "free": self.free_now(loc, now),
+            "status": loc.status(self.settings, now),
+            "mode": None,
+            "updated_at": max(seen) if seen else None,
+            "age_s": round(now - max(seen), 1) if seen else None,
+            "camera_too_hot": any(part.camera.too_hot for part in loc.parts),
+            "location": loc.location,
+            "demo": all(part.demo for part in loc.parts),
+            "layout": None,
+            "slots": [],
+            "forecast": self.history.forecast(loc, now),
+            "parts": parts,
+        }
+
+    def rack_view(self, rack: Rack, now: float, forecast: bool = True) -> dict:
+        view = {
             "id": rack.id,
             "name": rack.name,
             "capacity": rack.capacity,
@@ -376,11 +438,13 @@ class Store:
             "source": "demo" if rack.demo else "vision" if rack.vision else "camera",
             "layout": rack.layout,
             "slots": [{"id": sid, "state": slot.state} for sid, slot in sorted(rack.slots.items())],
-            "forecast": self.history.forecast(rack, now),
         }
+        if forecast:
+            view["forecast"] = self.history.forecast(rack, now)
+        return view
 
-    def history_view(self, rack: Rack, now: float) -> dict:
-        return self.history.view(rack, now, rack.free if rack.status(self.settings, now) == "ok" else None)
+    def history_view(self, rack: Rack | Location, now: float) -> dict:
+        return self.history.view(rack, now, self.free_now(rack, now))
 
     def admin_view(self, now: float) -> dict:
         def age(stamp: float | None) -> float | None:

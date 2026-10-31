@@ -1,8 +1,8 @@
 """Place search for the user page, through OpenStreetMap's Nominatim.
 
-Its usage policy (https://operations.osmfoundation.org/policies/nominatim/) asks for at most one request per
-second for the whole app, a User-Agent that names the app, and cached results. Searches only run when someone
-presses search, never while typing. What people type is kept only in the in-memory cache, never logged.
+Usage policy (https://operations.osmfoundation.org/policies/nominatim/): at most one request per second for the
+whole app, a User-Agent naming the app, cached results. Searches run only on pressing search; queries stay in the
+in-memory cache, never logged.
 """
 
 from __future__ import annotations
