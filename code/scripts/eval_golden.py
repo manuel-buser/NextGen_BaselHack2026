@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # make "bikeslot" 
 import cv2  # noqa: E402
 
 from bikeslot import config  # noqa: E402
+from bikeslot.geometry import imread  # noqa: E402
 from bikeslot.occupancy import SlotMaskCache, analyze_frame, make_trackers  # noqa: E402
 from bikeslot.preview import render  # noqa: E402
 from bikeslot.store import golden_truth, layout_from_golden  # noqa: E402
@@ -40,7 +41,7 @@ def main() -> int:
     total = correct = 0
     print(f"model={config.MODEL_NAME} imgsz={config.IMGSZ} conf={config.CONF}")
     for item in truth:
-        img = cv2.imread(str(labels.parent / item["file"]))
+        img = imread(str(labels.parent / item["file"]))
         if img is None:
             print(f"!! cannot read {item['file']}")
             continue

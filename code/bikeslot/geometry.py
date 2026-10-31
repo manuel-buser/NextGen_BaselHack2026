@@ -144,6 +144,17 @@ def polygon_iou(a: Sequence[Point], b: Sequence[Point]) -> float:
 # --------------------------------------------------------------------------- image helpers
 
 
+def imread(path) -> Optional[np.ndarray]:
+    """cv2.imread that also works for non-ASCII paths on Windows (umlauts in file names)."""
+    try:
+        data = np.fromfile(str(path), dtype=np.uint8)
+    except OSError:
+        return None
+    if data.size == 0:
+        return None
+    return cv2.imdecode(data, cv2.IMREAD_COLOR)
+
+
 def resize_max_side(img: np.ndarray, max_side: int) -> tuple[np.ndarray, float]:
     """Resize so the longer side equals ``max_side`` (never upscales). Returns (image, scale)."""
     h, w = img.shape[:2]
