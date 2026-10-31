@@ -21,12 +21,12 @@ Two options. The node implements one of them; the app supports both, chosen per 
 ### Option A: the node posts (push)
 
 Base URL: the laptop running the app, for example `http://192.168.43.10:8000`. Rack id: configured in the
-sketch, must match `code/app/racks.yaml` (`A`, `B`, ...). Optional header `X-Node-Id: esp32-1` on every call.
+sketch, must match `code/app/racks.yaml` (`A1` to `A4`). Optional header `X-Node-Id: esp32-1` on every call.
 
 ### `POST /api/camera/{rack}/picture`
 - Body: the raw JPEG bytes. Header `Content-Type: image/jpeg`.
 - Send one every 5 to 10 seconds for the demo (60 seconds in real use). 1024x768 or 1280x1024 is plenty.
-- Reply `200 {"ok": true, "rack": "A", "free": 7, "capacity": 15, "status": "ok"}`.
+- Reply `200 {"ok": true, "rack": "A2", "free": 7, "capacity": 19, "status": "ok"}`.
 - `503 {"ok": false, "error": "detector unavailable"}`: the recognition service is down; keep sending.
 - `404`: unknown rack id. `400`: empty body.
 - The app keeps the picture only for this request and never writes it to disk.
@@ -38,12 +38,12 @@ sketch, must match `code/app/racks.yaml` (`A`, `B`, ...). Optional header `X-Nod
   "too hot" instead of "offline").
 - Reply `200 {"ok": true}`.
 
-Try it without hardware: `python code/app/tools/fake_camera.py --app http://localhost:8000 --rack A`.
+Try it without hardware: `python code/app/tools/fake_camera.py --app http://localhost:8000 --rack A2`.
 
 Example with curl:
 ```sh
-curl -X POST --data-binary @photo.jpg -H "Content-Type: image/jpeg" http://localhost:8000/api/camera/A/picture
-curl -X POST -d '{"tempC":41.2,"tooHot":false}' -H "Content-Type: application/json" http://localhost:8000/api/camera/A/alive
+curl -X POST --data-binary @photo.jpg -H "Content-Type: image/jpeg" http://localhost:8000/api/camera/A2/picture
+curl -X POST -d '{"tempC":41.2,"tooHot":false}' -H "Content-Type: application/json" http://localhost:8000/api/camera/A2/alive
 ```
 
 ### Option B: the app polls the node (pull)
@@ -90,13 +90,13 @@ own stand-in and never sends them to the detector.
 ### `GET /health`
 - Reply `200 {"status": "ok", "model": "yolo11n", "version": "0.1.0"}`. Shown on the admin page.
 
-### `POST /analyze?rack=A`
+### `POST /analyze?rack=A2`
 - Body: the raw JPEG bytes, header `Content-Type: image/jpeg`. Query parameter `rack` tells the detector
-  which slot boxes to use (its own config, for example `slots/A.json`).
+  which slot boxes to use (its own config, for example `slots/A2.json`).
 - Reply `200` with:
 ```json
 {
-  "rack": "A",
+  "rack": "A2",
   "slots": [
     {"id": 1, "state": "taken", "confidence": 0.93},
     {"id": 2, "state": "free", "confidence": 0.88},
@@ -113,7 +113,8 @@ own stand-in and never sends them to the detector.
 - Slot numbering: the ids are 1 to the rack's capacity and follow the rack plan in the app's racks file
   (`layout`): spaces are numbered from the entrance along the rack (along the layout's bearing), row by row,
   row 1 being the left row when you look along the rack from the entrance. The app draws space n where the
-  layout puts it, so a slot box drawn for the wrong number shows the wrong space as free.
+  layout puts it, so a slot box drawn for the wrong number shows the wrong space as free. The section with
+  the camera (A2 for now) has 19 spaces in one row, numbered 1 to 19 from the west end.
 - `bikes` is optional and only for debugging; the app ignores it. Never include person detections.
 - Any non-200 reply or timeout makes the app answer the camera with 503 and shows the detector as down on the
   admin page. Default timeout 15 seconds.
@@ -123,29 +124,36 @@ Reference implementation with the exact shape: `code/app/tools/fake_detector.py`
 
 ## 3. App to pages (for reference)
 
-- `GET /api/racks` -> `{"generated_at": ..., "racks": [{"id": "A", "name": "...", "capacity": 15, "free": 7,
+- `GET /api/racks` -> `{"generated_at": ..., "racks": [{"id": "B", "name": "...", "capacity": 12, "free": 7,
   "status": "ok|starting|stale|unknown", "mode": "slots|count", "updated_at": ..., "age_s": 4.2,
-  "camera_too_hot": false, "location": {"lat": 47.5463, "lng": 7.5950} or null, "demo": false,
-  "layout": {"bearing": 35, "entrance": "start|end", "width": 15, "height": 1,
+  "camera_too_hot": false, "location": {"lat": 47.5472, "lng": 7.5969} or null, "demo": false,
+  "layout": {"bearing": 120, "entrance": "start|end", "width": 6, "height": 2,
   "spaces": [{"id": 1, "x": 0, "y": 0, "w": 1, "h": 1}, ...]} or null,
   "slots": [{"id": 1, "state": "taken|free|unknown"}, ...],
   "forecast": {"usually_full_by": "08:15" or null, "usual_free_now": 3.4 or null, "days": 4, "learning": false}}]}`
   (live slot states only; `forecast` comes from the free counts over time, see the history below;
   `demo` is true for a made-up rack fed by `code/app/tools/demo_data.py`; `layout` is the rack plan in grid
-  units, x along the bearing from space 1 and y across it, the same for both `layout` forms of the racks file)
-- `GET /api/racks/{id}` -> one rack in the same shape; 404 for an unknown rack.
-- `GET /api/racks/{id}/history` -> `{"rack": "A", "clock": "real|demo", "now": "07:40", "day_type":
-  "weekday|weekend", "free_now": 6 or null, "capacity": 15, "today": [{"t": "06:00", "free": 12.0}, ...],
+  units, x along the bearing from space 1 and y across it, the same for both `layout` forms of the racks file).
+  Racks with the same `group` in the racks file come as one location entry in the place of its first rack:
+  `{"id": "Peter Merian-Weg", "name": "Peter Merian-Weg", "capacity": 67, "free": 40, "status": ..., "location":
+  the middle of its racks, "demo": false unless all its racks are, "layout": null, "slots": [], "forecast": ...,
+  "parts": [one rack each in the shape above, without "forecast"]}`. `free` adds up the racks that are "ok" (a
+  rack without live data adds none) and is null when none is; `status` is "ok" when any rack is.
+- `GET /api/racks/{id}` -> one rack or location in the same shape; 404 for an unknown id.
+- `GET /api/racks/{id}/history` -> `{"rack": "A2", "now": "07:40", "day_type":
+  "weekday|weekend", "free_now": 6 or null, "capacity": 19, "today": [{"t": "06:00", "free": 12.0}, ...],
   "typical": [{"t": "00:00", "free": 14.2 or null, "full_share": 0.0, "n": 12}, ...], "insights":
   {"usually_full_by": "08:15" or null, "best_before": "07:45" or null, "usual_free_now": 3.4 or null, "days": 4,
-  "learning": false}}`; 404 for an unknown rack. Only free counts per rack are kept, one sample per minute while
-  the rack is "ok". `now`, `day_type` and the insights use the rack's clock: the real local time, or for a demo
-  rack the simulated time the demo driver sends with each picture (`X-Demo-Clock: 2026-11-02T07:35`, ignored
-  for real racks). `today`: 15-minute averages of today so far, oldest first. `typical`: always 96 entries of
+  "learning": false}}`; 404 for an unknown rack. For a location the free counts of its racks are added per
+  minute (a rack without a sample in that minute adds none). Only free counts per rack are kept, one sample per minute while
+  the rack is "ok". `now`, `day_type` and the insights use the app's local time, the same for every rack. `today`: 15-minute averages of today so far, oldest first. `typical`: always 96 entries of
   15 minutes for this day type, `free` null where there is no data, `n` the sample count. `free_now` is null
   unless the rack is "ok". `usually_full_by`: the first slot full in at least half of its samples over at least
   2 days; `best_before`: the last slot before it with at least 2 free on average; `days`: days learned for this
-  day type; `learning`: fewer than 2 days.
+  day type; `learning`: fewer than 2 days. `?minutes=12` (0 to 1440, else 422) adds `"arrival": {"minutes": 12,
+  "at": "07:52", "free": 9 or null}`: the usual free count at `at` (its own day type) plus `free_now` minus the
+  usual count now, that difference halved per 60 minutes ahead, clamped to 0..capacity and rounded; `free_now`
+  when either usual count is missing; null when `free_now` is.
 - `GET /api/admin/status` -> app, detector (reachable, model, last error), cameras (`source` push or pull,
   last alive, last picture, temperature, too hot and whether it was derived, last error, `node` with uptime,
   reboot time, WiFi, memory and ip), racks.

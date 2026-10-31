@@ -1,17 +1,38 @@
-# Demo setup for one real camera, three racks in all: A is real, B and C are made up and fed by tools/demo_data.py
-# (B fills up during the day, C is the furthest from A and stays without data).
-# Start the app with BIKESLOT_RACKS=racks.demo.yaml. A rack with demo: true is labelled "Demo data" on both
-# pages and its pictures are always decided by the built-in stand-in, never by the real detector.
-# Coordinates and bearings are placeholders; see racks.yaml for the layout format.
+# Demo with one real camera (A2): the four Peter Merian-Weg sections of racks.yaml plus two made-up racks.
+# A1, A3, A4, B and C are made up and fed by tools/demo_data.py. Start the app with BIKESLOT_RACKS=racks.demo.yaml.
+# A demo: true rack looks like any other on the user page; its pictures always go to the built-in stand-in.
+# B and C have placeholder coordinates and bearings; see racks.yaml for the layout format.
 racks:
-  - id: A
-    name: Main entrance shelter
-    capacity: 15
-    location: {lat: 47.5463, lng: 7.5950}
-    layout: {rows: 1, cols: 15, bearing: 35}
-    # The camera node, polled by the app. Its address changes with the network: check it before the demo.
-    # The still-picture path is not confirmed yet, so picture_path keeps its default (/capture).
+  - id: A1
+    name: Peter Merian-Weg 1
+    group: Peter Merian-Weg
+    capacity: 10
+    location: {lat: 47.546174, lng: 7.593798}
+    layout: {rows: 1, cols: 10, bearing: 118, space_m: [0.5, 1.2]}
+    demo: true
+  - id: A2
+    name: Peter Merian-Weg 2
+    group: Peter Merian-Weg
+    capacity: 19
+    location: {lat: 47.546131, lng: 7.593918}
+    layout: {rows: 1, cols: 19, bearing: 118, space_m: [0.5, 1.2]}
+    # The node's address changes with the network: check it before the demo. picture_path keeps its default
+    # (/capture) until the node's still-picture path is confirmed. To move the camera, swap this line with a demo line.
     camera: {url: "http://192.168.21.95", status_path: /health}
+  - id: A3
+    name: Peter Merian-Weg 3
+    group: Peter Merian-Weg
+    capacity: 19
+    location: {lat: 47.546078, lng: 7.594065}
+    layout: {rows: 1, cols: 19, bearing: 118, space_m: [0.5, 1.2]}
+    demo: true
+  - id: A4
+    name: Peter Merian-Weg 4
+    group: Peter Merian-Weg
+    capacity: 19
+    location: {lat: 47.546026, lng: 7.594212}
+    layout: {rows: 1, cols: 19, bearing: 118, space_m: [0.5, 1.2]}
+    demo: true
   - id: B
     name: Building 2, north side
     capacity: 12
@@ -24,10 +45,11 @@ racks:
     location: {lat: 47.5458, lng: 7.5975}
     layout: {rows: 1, cols: 8, bearing: 80}
     demo: true
-# places: where people go (buildings, entrances), offered on the map as "Where are you going?". Placeholders
-# near the racks.
+# places: where people go (buildings, entrances), offered on the map as "Where are you going?".
 places:
-  - {name: Main entrance, location: {lat: 47.5461, lng: 7.5956}}
-  - {name: Building 2, location: {lat: 47.5475, lng: 7.5965}}
-  - {name: Canteen, location: {lat: 47.5468, lng: 7.5981}}
-  - {name: Visitor centre, location: {lat: 47.5455, lng: 7.5985}}
+  - {name: Memox entrance, location: {lat: 47.546396, lng: 7.594054}}
+  - {name: Peter Merian-Strasse 84, location: {lat: 47.546106, lng: 7.594596}}
+  - {name: Peter Merian-Strasse 88, location: {lat: 47.545848, lng: 7.595292}}
+  - {name: Faculty of Law (Peter Merian-Weg 8), location: {lat: 47.545313, lng: 7.597321}}
+  - {name: Economics library (Peter Merian-Weg 6), location: {lat: 47.545170, lng: 7.597735}}
+  - {name: Basel SBB station, location: {lat: 47.54741, lng: 7.58956}}
