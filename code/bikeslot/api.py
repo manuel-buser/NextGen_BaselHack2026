@@ -46,6 +46,11 @@ async def lifespan(app: FastAPI):
     print(f"[bikeslot] {len(store.cameras)} camera(s) known, loading detector {config.MODEL_NAME} ...")
     await run_in_threadpool(detector.load)
     print(f"[bikeslot] detector ready: {detector.info()}")
+    # the stand detector (calibration only) takes ~30 s to load: warm it up in the background
+    import threading
+
+    from . import stands
+    threading.Thread(target=stands._load, name="stands-warmup", daemon=True).start()
     yield
 
 
@@ -223,7 +228,8 @@ def delete_layout(camera_id: str):
 
 @app.post("/cameras/{camera_id}/calibrate", tags=["admin"])
 async def calibrate(camera_id: str,
-                    use_vlm: bool = Query(True, description="ask the vision-language model for parking type / slot count"),
+                    use_vlm: bool = Query(True, description="ask the vision-language model (set-of-mark prompt) for parking type, slot count, bike->slot mapping"),
+                    use_stands: bool = Query(True, description="detect rack stands with the open-vocabulary model (visual prompting)"),
                     apply: bool = Query(True, description="store the proposal as the camera's layout (status 'proposed')")):
     """Propose a slot layout from the buffered frames of this camera (Stage A). The admin then edits/confirms it
     with PUT /cameras/{camera_id}/layout."""
@@ -233,7 +239,7 @@ async def calibrate(camera_id: str,
     from .calibrate import propose_layout  # local import: keeps the service up even if calibration deps fail
 
     try:
-        proposal = await run_in_threadpool(propose_layout, cam, use_vlm)
+        proposal = await run_in_threadpool(propose_layout, cam, use_vlm, use_stands)
     except ValueError as exc:
         raise HTTPException(409, str(exc))
     if apply:

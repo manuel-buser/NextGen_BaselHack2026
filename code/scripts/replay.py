@@ -21,6 +21,9 @@ import cv2
 import numpy as np
 import requests
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from bikeslot.geometry import imread  # noqa: E402
+
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
@@ -49,7 +52,7 @@ def load_bytes(src, resize: str | None, quality: int) -> bytes:
             return data
         img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
     else:
-        img = cv2.imread(str(src))
+        img = imread(str(src))
         if img is None:
             sys.exit(f"cannot read {src}")
     if resize:
