@@ -31,6 +31,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "img_converters.h"
+#include "nvs.h"
 #include "nvs_flash.h"
 #include "pedestrian_detect.hpp"
 
@@ -102,9 +103,14 @@ static PedestrianDetect *s_detect = nullptr;
 static SemaphoreHandle_t s_cam_lock;  // camera + detector are shared by the loop and the web server
 
 // ---------------------------------------------------------------- Wi-Fi
-// Several known networks (WIFI_NETWORKS in config.h), tried in order: after WIFI_SWITCH_AFTER
-// failed attempts the camera moves on to the next one. So the same firmware works indoors on
-// the venue Wi-Fi and outdoors on a phone hotspot, without reflashing.
+// Several known networks (WIFI_NETWORKS in config.h), tried in order: after a few failed
+// attempts the camera moves on to the next one. So the same firmware works indoors on the venue
+// Wi-Fi and outdoors on a phone hotspot, without reflashing.
+//
+// Fast connect: Wi-Fi starts before the camera and connects in the background. After a
+// successful connect the network, its BSSID and channel are saved in NVS; the next boot goes
+// straight to that access point without scanning. If that fails once, the cache is cleared and
+// the normal list with a full scan takes over.
 
 struct WifiNet {
     const char *ssid;
@@ -113,14 +119,84 @@ struct WifiNet {
 static const WifiNet s_nets[] = WIFI_NETWORKS;
 static const int s_net_count = sizeof(s_nets) / sizeof(s_nets[0]);
 static int s_net = 0, s_net_fails = 0;
+static int s_round_start = 0;          // network the current round of attempts started with
+static bool s_ever_connected = false;
+static bool s_using_cache = false;     // connecting to the cached BSSID/channel right now
+static const EventBits_t WIFI_ROUND_FAILED = BIT1;  // every network failed before the first connect
 #ifndef WIFI_SWITCH_AFTER
-#define WIFI_SWITCH_AFTER 4
+#define WIFI_SWITCH_AFTER 4        // after a drop: attempts before moving to the next network
+#endif
+#ifndef WIFI_SWITCH_AFTER_BOOT
+#define WIFI_SWITCH_AFTER_BOOT 2   // until the first connect: move on quickly
+#endif
+#ifndef WIFI_CACHE_MIN_RSSI
+#define WIFI_CACHE_MIN_RSSI -70    // weaker access points are not cached: the next boot scans for a better one
 #endif
 #ifndef CAMERA_HOSTNAME
 #define CAMERA_HOSTNAME "bikeslot-cam"
 #endif
 
-static void wifi_apply(int idx)
+static const char *WIFI_NVS_NS = "wifi_fast";
+
+static int64_t ms_now() { return esp_timer_get_time() / 1000; }
+
+// Cached access point: returns the network index (or -1) and fills bssid/channel
+static int wifi_cache_load(uint8_t bssid[6], uint8_t &channel)
+{
+    nvs_handle_t h;
+    if (nvs_open(WIFI_NVS_NS, NVS_READONLY, &h) != ESP_OK) return -1;
+    char ssid[33] = {};
+    size_t ssid_len = sizeof(ssid), bssid_len = 6;
+    int idx = -1;
+    if (nvs_get_str(h, "ssid", ssid, &ssid_len) == ESP_OK && nvs_get_blob(h, "bssid", bssid, &bssid_len) == ESP_OK &&
+        bssid_len == 6 && nvs_get_u8(h, "channel", &channel) == ESP_OK) {
+        // look the network up by name: config.h may have been reordered since
+        for (int i = 0; i < s_net_count; i++) {
+            if (!strcmp(s_nets[i].ssid, ssid)) idx = i;
+        }
+    }
+    nvs_close(h);
+    return idx;
+}
+
+static void wifi_cache_clear()
+{
+    nvs_handle_t h;
+    if (nvs_open(WIFI_NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_erase_all(h);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+// Only writes to flash when the network, BSSID or channel actually changed
+static void wifi_cache_save()
+{
+    wifi_ap_record_t ap = {};
+    if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) return;
+    if (ap.rssi < WIFI_CACHE_MIN_RSSI) {
+        // don't pin the camera to a weak access point: next boot scans and picks the strongest
+        wifi_cache_clear();
+        ESP_LOGW(TAG, "Signal weak (%d dBm < %d) - not caching this access point", ap.rssi, WIFI_CACHE_MIN_RSSI);
+        return;
+    }
+    uint8_t old_bssid[6], old_channel = 0;
+    if (wifi_cache_load(old_bssid, old_channel) == s_net && !memcmp(old_bssid, ap.bssid, 6) &&
+        old_channel == ap.primary) {
+        return;
+    }
+    nvs_handle_t h;
+    if (nvs_open(WIFI_NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_str(h, "ssid", s_nets[s_net].ssid);
+    nvs_set_blob(h, "bssid", ap.bssid, 6);
+    nvs_set_u8(h, "channel", ap.primary);
+    nvs_commit(h);
+    nvs_close(h);
+    ESP_LOGI(TAG, "Saved %s (BSSID %02x:%02x:%02x:%02x:%02x:%02x, channel %d) for fast connect", s_nets[s_net].ssid,
+             ap.bssid[0], ap.bssid[1], ap.bssid[2], ap.bssid[3], ap.bssid[4], ap.bssid[5], ap.primary);
+}
+
+// bssid/channel set: go straight to that access point (no scan); otherwise scan for the SSID
+static void wifi_apply(int idx, const uint8_t *bssid = nullptr, uint8_t channel = 0)
 {
     wifi_config_t wc = {};
     // the struct fields are fixed-size and need no terminating zero when full
@@ -128,34 +204,93 @@ static void wifi_apply(int idx)
     memcpy(wc.sta.password, s_nets[idx].password, strnlen(s_nets[idx].password, sizeof(wc.sta.password)));
     wc.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;  // minimum; WPA3 networks work too
     wc.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
+    if (bssid) {
+        wc.sta.bssid_set = true;
+        memcpy(wc.sta.bssid, bssid, 6);
+        wc.sta.channel = channel;
+    } else {
+        // Scan every channel and take the strongest access point with this SSID. The default
+        // fast scan takes the first one it finds, which may be a far-away one (memox has several).
+        wc.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+        wc.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+    }
     esp_wifi_set_config(WIFI_IF_STA, &wc);
-    ESP_LOGI(TAG, "Connecting to %s ...", s_nets[idx].ssid);
+    if (bssid) ESP_LOGI(TAG, "[%lld ms] Connecting to %s (cached AP, channel %d) ...", ms_now(), s_nets[idx].ssid, channel);
+    else ESP_LOGI(TAG, "[%lld ms] Connecting to %s ...", ms_now(), s_nets[idx].ssid);
+}
+
+static const char *wifi_reason_name(uint8_t r)
+{
+    switch (r) {
+    case WIFI_REASON_NO_AP_FOUND: return "network not found";
+    case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY: return "network found, incompatible security";
+    case WIFI_REASON_NO_AP_FOUND_IN_AUTHMODE_THRESHOLD: return "network found, security too weak";
+    case WIFI_REASON_NO_AP_FOUND_IN_RSSI_THRESHOLD: return "network found, signal too weak";
+    case WIFI_REASON_AUTH_FAIL: return "authentication failed (wrong password?)";
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_HANDSHAKE_TIMEOUT: return "handshake timeout (wrong password?)";
+    case WIFI_REASON_AUTH_EXPIRE: return "authentication expired";
+    case WIFI_REASON_ASSOC_FAIL: return "association failed";
+    case WIFI_REASON_CONNECTION_FAIL: return "connection failed";
+    case WIFI_REASON_BEACON_TIMEOUT: return "beacon timeout (signal lost)";
+    case WIFI_REASON_AUTH_LEAVE:
+    case WIFI_REASON_ASSOC_LEAVE: return "disconnected by access point";
+    default: return "other";
+    }
 }
 
 static void wifi_event(void *, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
+        // 20 MHz channel width: a 40 MHz channel needs a better signal and drops out sooner at
+        // long range; the camera's ~1 picture per second never needs the extra throughput.
+        const esp_err_t bw = esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW20);
+        if (bw != ESP_OK) ESP_LOGW(TAG, "Could not set 20 MHz channel width: %s", esp_err_to_name(bw));
         esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        const auto *ev = static_cast<wifi_event_sta_disconnected_t *>(data);
         xEventGroupClearBits(s_wifi_events, WIFI_CONNECTED);
-        if (s_net_count > 1 && ++s_net_fails >= WIFI_SWITCH_AFTER) {
+        ESP_LOGW(TAG, "[%lld ms] Wi-Fi %s: reason %d (%s)", ms_now(), s_nets[s_net].ssid, ev->reason,
+                 wifi_reason_name(ev->reason));
+        if (s_using_cache) {
+            // cached access point gone or moved: forget it, scan for the network normally
+            s_using_cache = false;
+            wifi_cache_clear();
+            ESP_LOGW(TAG, "Cached access point not reachable - falling back to a full scan");
+            wifi_apply(s_net);
+        } else if (s_net_count > 1 && ++s_net_fails >= (s_ever_connected ? WIFI_SWITCH_AFTER : WIFI_SWITCH_AFTER_BOOT)) {
             s_net_fails = 0;
             s_net = (s_net + 1) % s_net_count;
+            if (!s_ever_connected && s_net == s_round_start) {
+                // every network failed: let app_main list what is visible, it restarts the round
+                xEventGroupSetBits(s_wifi_events, WIFI_ROUND_FAILED);
+                return;
+            }
             ESP_LOGW(TAG, "Wi-Fi not reachable - switching to %s", s_nets[s_net].ssid);
             wifi_apply(s_net);
-        } else {
-            ESP_LOGW(TAG, "Wi-Fi disconnected - reconnecting to %s", s_nets[s_net].ssid);
+        } else if (s_net_count == 1 && !s_ever_connected && ++s_net_fails >= WIFI_SWITCH_AFTER_BOOT * 2) {
+            s_net_fails = 0;
+            xEventGroupSetBits(s_wifi_events, WIFI_ROUND_FAILED);
+            return;
         }
         vTaskDelay(pdMS_TO_TICKS(500));
         esp_wifi_connect();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         s_ip = static_cast<ip_event_got_ip_t *>(data)->ip_info.ip;
         s_net_fails = 0;
-        ESP_LOGI(TAG, "Wi-Fi connected to %s, IP " IPSTR, s_nets[s_net].ssid, IP2STR(&s_ip));
+        s_using_cache = false;
+        s_ever_connected = true;
+        wifi_ap_record_t ap = {};
+        esp_wifi_sta_get_ap_info(&ap);
+        ESP_LOGI(TAG, "[%lld ms] Wi-Fi connected to %s (%02x:%02x:%02x:%02x:%02x:%02x, ch %d, RSSI %d dBm), IP " IPSTR,
+                 ms_now(), s_nets[s_net].ssid, ap.bssid[0], ap.bssid[1], ap.bssid[2], ap.bssid[3], ap.bssid[4],
+                 ap.bssid[5], ap.primary, ap.rssi, IP2STR(&s_ip));
+        wifi_cache_save();
         xEventGroupSetBits(s_wifi_events, WIFI_CONNECTED);
     }
 }
 
+// Starts connecting in the background and returns right away
 static void wifi_start()
 {
     s_wifi_events = xEventGroupCreate();
@@ -166,17 +301,65 @@ static void wifi_start()
 
     wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&init));
+    esp_wifi_set_storage(WIFI_STORAGE_RAM);  // no flash write on every boot; our own cache is in NVS
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event, nullptr, nullptr));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event, nullptr, nullptr));
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    wifi_apply(s_net);
+    uint8_t bssid[6], channel = 0;
+    const int cached = wifi_cache_load(bssid, channel);
+    if (cached >= 0) {
+        s_net = s_round_start = cached;
+        s_using_cache = true;
+        wifi_apply(s_net, bssid, channel);
+    } else {
+        wifi_apply(s_net);
+    }
     ESP_ERROR_CHECK(esp_wifi_start());
     esp_wifi_set_ps(WIFI_PS_NONE);  // lower latency for the live view
+}
 
+// Every network failed: list what the camera can see (tells "network off" from "weak signal"),
+// then start the next round of attempts
+static void wifi_round_failed()
+{
+    ESP_LOGE(TAG, "[%lld ms] Could not connect to any configured network. Networks visible from here:", ms_now());
+    wifi_scan_config_t sc = {};
+    if (esp_wifi_scan_start(&sc, true) == ESP_OK) {
+        uint16_t n = 20;
+        wifi_ap_record_t recs[20];
+        if (esp_wifi_scan_get_ap_records(&n, recs) == ESP_OK) {
+            for (int i = 0; i < n; i++) {
+                ESP_LOGE(TAG, "  %-32s ch %2d  RSSI %4d dBm", reinterpret_cast<const char *>(recs[i].ssid), recs[i].primary,
+                         recs[i].rssi);
+            }
+            if (n == 0) ESP_LOGE(TAG, "  (none - check the antenna is attached)");
+        }
+    } else {
+        ESP_LOGE(TAG, "  (scan failed)");
+    }
+    xEventGroupClearBits(s_wifi_events, WIFI_ROUND_FAILED);
+    s_round_start = s_net;
+    wifi_apply(s_net);
+    esp_wifi_connect();
+}
+
+// Blocks until connected, listing visible networks after every failed round
+static void wifi_wait()
+{
+    while (true) {
+        const EventBits_t bits = xEventGroupWaitBits(s_wifi_events, WIFI_CONNECTED | WIFI_ROUND_FAILED, pdFALSE, pdFALSE,
+                                                     portMAX_DELAY);
+        if (bits & WIFI_CONNECTED) return;
+        wifi_round_failed();
+    }
 }
 
 // ---------------------------------------------------------------- camera
+
+#ifndef CAMERA_INIT_RETRIES
+#define CAMERA_INIT_RETRIES 3
+#endif
 
 static bool camera_start()
 {
@@ -206,11 +389,17 @@ static bool camera_start()
     c.fb_location = CAMERA_FB_IN_PSRAM;
     c.grab_mode = CAMERA_GRAB_LATEST;
 
-    esp_err_t err = esp_camera_init(&c);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Camera init failed: 0x%x", err);
-        return false;
+    // The XIAO has no PWDN/RESET pin, so the sensor is not reset on a soft reboot:
+    // deinit and retry gives it a clean start.
+    esp_err_t err = ESP_FAIL;
+    for (int attempt = 1; attempt <= CAMERA_INIT_RETRIES; attempt++) {
+        err = esp_camera_init(&c);
+        if (err == ESP_OK) break;
+        ESP_LOGE(TAG, "Camera init failed: 0x%x (attempt %d/%d)", err, attempt, CAMERA_INIT_RETRIES);
+        esp_camera_deinit();
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
+    if (err != ESP_OK) return false;
     sensor_t *s = esp_camera_sensor_get();
     if (s->id.PID == OV3660_PID) {  // OV3660: over-saturated by default
         s->set_brightness(s, 1);
@@ -956,6 +1145,10 @@ extern "C" void app_main(void)
     s_cam_lock = xSemaphoreCreateMutex();
     s_latest_lock = xSemaphoreCreateMutex();
     health_start();
+
+    // Wi-Fi FIRST: it connects in the background while the camera and detector start
+    wifi_start();
+
     if (!camera_start()) {
         vTaskDelay(pdMS_TO_TICKS(5000));
         esp_restart();
@@ -968,16 +1161,18 @@ extern "C" void app_main(void)
     s_detect->set_score_thr(PERSON_SCORE_THR);
     ESP_LOGI(TAG, "Person detector ready (score threshold %.2f)", PERSON_SCORE_THR);
 
-    wifi_start();
-    xEventGroupWaitBits(s_wifi_events, WIFI_CONNECTED, pdFALSE, pdTRUE, portMAX_DELAY);
+    wifi_wait();  // often already connected by now
+    ESP_LOGI(TAG, "[%lld ms] Ready", ms_now());
     web_start();
     xTaskCreatePinnedToCore(live_task, "live", 16384, nullptr, 4, nullptr, 1);
 
     // Pull mode only: the server fetches GET /snapshot. Repeat the address now and then,
     // because USB serial often misses the boot messages.
     while (true) {
-        ESP_LOGI(TAG, "[%s] live view http://" IPSTR "/  picture http://" IPSTR "/snapshot",
-                 s_nets[s_net].ssid, IP2STR(&s_ip), IP2STR(&s_ip));
+        wifi_ap_record_t ap = {};
+        if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) ap.rssi = 0;  // 0 = not connected right now
+        ESP_LOGI(TAG, "[%s] RSSI %d dBm ch %d | live view http://" IPSTR "/  picture http://" IPSTR "/snapshot",
+                 s_nets[s_net].ssid, ap.rssi, ap.primary, IP2STR(&s_ip), IP2STR(&s_ip));
         vTaskDelay(pdMS_TO_TICKS(15000));
     }
 }
