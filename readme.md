@@ -53,6 +53,9 @@ Persons and licence plates are blurred before anything is shown or uploaded; raw
 - Vision pipeline, API contract, ESP32 contract and privacy notes: [documentation/vision-pipeline.md](documentation/vision-pipeline.md)
 - Code: [code/bikeslot/](code/bikeslot/) (service), [code/scripts/](code/scripts/) (replay = fake camera, golden evaluation), [code/tests/](code/tests/)
 - Golden data set with hand-labelled slots: [assets/pictures/GoldenDataSet/](assets/pictures/GoldenDataSet/)
+- App (user page with map, admin page): [code/app/](code/app/), its [README](code/app/README.md); interfaces between
+  camera, app and vision service: [documentation/CONTRACTS.md](documentation/CONTRACTS.md)
+- Demo set-up at Memox with one live camera, step by step: [documentation/demo-runbook.md](documentation/demo-runbook.md)
 
 ### Run the vision service
 

@@ -136,6 +136,29 @@ class Store:
             return self.get(layout.camera_id).layout
         return self.set_layout(layout.camera_id, layout, persist=False)
 
+    def seed_layout_file(self, path: Path, camera_id: Optional[str] = None) -> Optional[Layout]:
+        """Load a layout JSON from the repo (e.g. the demo slot polygons) unless a saved layout exists for its camera.
+
+        With ``camera_id`` the layout is seeded under that camera instead of the file's one (slot ids renamed), for a
+        live camera that films the very scene the polygons were drawn on."""
+        path = Path(path)
+        if not path.exists():
+            return None
+        try:
+            layout = Layout.model_validate_json(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(f"[store] cannot load {path.name}: {exc}")
+            return None
+        if camera_id and camera_id != layout.camera_id:
+            prefix = f"{layout.camera_id}-"
+            for s in layout.slots:
+                if s.slot_id.startswith(prefix):
+                    s.slot_id = f"{camera_id}-{s.slot_id[len(prefix):]}"
+            layout.camera_id = camera_id
+        if (self.layout_dir / f"{layout.camera_id}.json").exists():
+            return self.get(layout.camera_id).layout
+        return self.set_layout(layout.camera_id, layout, persist=False)
+
     # ------------------------------------------------------------------ frames / status
     def push_frame(self, cam: CameraState, frame: np.ndarray) -> None:
         cam.frames.append((utcnow(), frame))

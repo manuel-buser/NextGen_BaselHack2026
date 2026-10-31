@@ -12,6 +12,13 @@ ESP32-CAM ──JPEG every ~5 s──▶ POST /cameras/{id}/frames ──▶ Sta
    frontend: GET /sites, GET /cameras/{id}/status, GET /cameras/{id}/preview.jpg
 ```
 
+> **Second approach (2026-10-31 evening): fixed slot polygons + per-slot binary classifier.** For a camera that
+> never moves, the slots never move either, so nothing has to find or count them per frame: polygons are drawn
+> once, every snapshot is cut into one crop per slot and a small CNN says free/occupied. It lives next to this
+> pipeline in `code/bikeslot/slotcls/` and is selected per camera (`layout.params.engine = "classifier"`) or
+> globally (`BIKESLOT_ENGINE=classifier`); the API below is unchanged. See
+> [slot-classifier.md](slot-classifier.md). The detector pipeline described here stays the default.
+
 Two stages per camera:
 
 | Stage | When | What |
@@ -123,6 +130,25 @@ Use `127.0.0.1`, not `localhost`, in clients on Windows (IPv6 fallback costs ~2 
 Tunables live in `code/bikeslot/config.py` and can be overridden with `BIKESLOT_*` environment variables
 (e.g. `BIKESLOT_MODEL=yolo11x.pt` for the detection-only model, `BIKESLOT_CONF=0.15`, `BIKESLOT_DEVICE=cpu`).
 
+## Handing the result to the app (`code/app`)
+
+The app shows per-rack counts on its user and admin pages. A rack configured with `vision: {url, camera}` in the
+app's racks file takes this service's decided slots instead of pictures (`code/app/README.md`, "Live rack from the
+vision service"; contract in `documentation/CONTRACTS.md`, section 2b):
+
+* **Pull** (default): the app calls `GET /cameras/{camera}/status` every few seconds and `GET
+  /cameras/{camera}/preview.jpg` for its admin page. Nothing to configure here beyond the firewall (port 8000).
+* **Push** (`forward.py`): for an app this laptop can reach but that cannot reach the laptop (a server), set
+  `BIKESLOT_APP_URL=http://<app>` and `BIKESLOT_APP_RACKS=live01=MX-CAM` (camera id here -> rack id there, optionally
+  `BIKESLOT_APP_TOKEN` = the app's `VISION_TOKEN`). Every new status is posted to `POST {app}/api/vision/{rack}/status`
+  from a background thread, newest status per camera only; the app being down never delays a frame. State in
+  `GET /health` under `forward` (sent, errors, the app's last reply with its free count).
+
+The live camera `live01` is seeded at start with the 19-hook layout of the demo picture and the classifier engine
+(`BIKESLOT_DEMO_LAYOUT_CAMERAS`, default `live01`; a layout saved under `data/layouts/live01.json` wins), so a
+camera mounted where the demo picture was taken reports the 19 hooks immediately. Set-up steps for the pitch:
+`documentation/demo-runbook.md`.
+
 ## API (FastAPI, interactive docs at `/docs`)
 
 | Method | Path | Purpose |
@@ -138,7 +164,7 @@ Tunables live in `code/bikeslot/config.py` and can be overridden with `BIKESLOT_
 | PUT | `/cameras/{camera_id}/layout?pixels=true` | Admin saves rows (4 corners + `slot_count`) and/or slots and sets `status: "confirmed"`. |
 | POST | `/cameras/{camera_id}/calibrate?use_vlm=true` | Stage A on the buffered frames; stores the proposal as `status: "proposed"`. |
 | DELETE | `/cameras/{camera_id}/layout` | Forget the layout. |
-| GET | `/health` | Model, GPU, VLM state. |
+| GET | `/health` | Model, GPU, VLM state, pull and forward (push to the app) state. |
 
 ### CameraStatus (GET `/cameras/{id}/status`)
 

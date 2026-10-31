@@ -2,6 +2,9 @@
 
 Examples are computed on the fly from the images in ``assets/pictures`` (cached in RAM, pre-warmed in the
 background at service start):
+  * classifier - every picture in assets/pictures/DemoPictures with a <name>.layout.json next to it (the fixed
+              slot polygons of the slot-classifier approach): per-slot free/occupied from the small CNN, compared
+              with <name>.labels.json where it exists
   * golden  - hand-labelled layout, occupancy compared with the hand labels
   * auto3   - the reference scene calibrated automatically from its 3 images (different occupancy each),
               then occupancy of every image compared with the hand labels (no VLM, no admin)
@@ -13,6 +16,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
+from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi import APIRouter, HTTPException
@@ -41,8 +45,14 @@ def bind(store_lock) -> None:
 
 
 def examples() -> list[dict]:
+    out: list[dict] = []
+    for p in sorted(DEMO_PICTURES_DIR.glob("*.jpeg")):   # pictures with slot polygons drawn: the classifier approach
+        layout = p.with_suffix(".layout.json")
+        if layout.exists():
+            out.append({"name": f"classifier_{p.stem}", "kind": "classifier", "path": p, "layout": layout,
+                        "labels": p.with_suffix(".labels.json")})
     gold = sorted(config.GOLDEN_DIR.glob("*.png"))
-    out = [{"name": p.stem, "kind": "golden", "path": p} for p in gold]
+    out += [{"name": p.stem, "kind": "golden", "path": p} for p in gold]
     if gold:
         out.append({"name": "reference_auto_3frames", "kind": "auto3", "path": gold[-1], "paths": gold})
     out += [{"name": p.stem, "kind": "auto", "path": p} for p in sorted(GPT_DIR.glob("*.png"))]
@@ -80,9 +90,43 @@ def _compute_auto3(ex: dict) -> dict:
     return info
 
 
+def _compute_classifier(ex: dict) -> dict:
+    """New approach: the slot polygons drawn once for the demo picture + the per-crop classifier."""
+    import json
+
+    from .slotcls import pipeline as slotcls_pipeline
+    from .slotcls import smoothing
+
+    img = imread(str(ex["path"]))
+    if img is None:
+        raise HTTPException(404, f"cannot read {ex['path'].name}")
+    layout = Layout.model_validate_json(Path(ex.get("layout", config.DEMO_LAYOUT)).read_text(encoding="utf-8"))
+    layout.params = {**(layout.params or {}), "k_frames": 1, "min_frames": 1}
+    t0 = time.time()
+    res = slotcls_pipeline.analyze_frame(layout, img, layout.camera_id, smoothing.make_trackers(layout))
+    st = res.status
+    info = {"name": ex["name"], "kind": ex["kind"], "file": ex["path"].name, "slots": st.slot_count, "free": st.free,
+            "occupied": st.occupied, "unknown": st.unknown, "bikes": st.occupied, "persons": st.detections.get("person", 0),
+            "ms": round((time.time() - t0) * 1000), "message": st.message}
+    labels = Path(ex.get("labels", config.DEMO_LABELS))
+    if labels.exists():
+        frames = json.loads(labels.read_text(encoding="utf-8")).get("frames", [])
+        truth = next((f["slots"] for f in frames if f["file"] == ex["path"].name), {})
+        truth = {k: v for k, v in truth.items() if v in ("free", "occupied")}   # unknown = not scored
+        if truth:
+            pred = {x.slot_id: x.status for x in st.slots}
+            info["correct"] = sum(pred.get(k) == v for k, v in truth.items())
+            info["truth_slots"] = len(truth)
+            info["wrong"] = sorted(int(k.split("-S")[-1]) for k, v in truth.items() if pred.get(k) != v)
+    info["jpeg"] = render(res.frame, st, res.detections, None, max_width=960, show_detections=False, show_scores=True)
+    return info
+
+
 def _compute(ex: dict) -> dict:
     if ex["kind"] == "auto3":
         return _compute_auto3(ex)
+    if ex["kind"] == "classifier":
+        return _compute_classifier(ex)
     img = imread(str(ex["path"]))
     if img is None:
         raise HTTPException(404, f"cannot read {ex['path'].name}")
@@ -196,6 +240,10 @@ ul{margin:6px 0;padding-left:20px}code{font-size:13px;background:var(--line);pad
 <p class="muted" id="live-sub">Pulled from the real camera every 5 s.</p>
 <div id="live"></div>
 
+<h2>New approach &mdash; slots drawn once, a small CNN decides free / occupied per slot</h2>
+<p class="muted">The camera is fixed, so the slots never move: the 19 hooks of a bay (between two pillars) are drawn once as polygons (4 corners + "19", split in perspective; for the frontal phone pictures the row is found automatically from the rail and the hook pitch). Every snapshot is cut into one crop per slot, a MobileNetV3 classifier (ImageNet-pretrained, head trained on the labelled crops) says free or occupied, and the result is smoothed over the last frames. No bike detection, no slot counting. The number in each slot is the probability "occupied". The first picture is the camera's own view by day; the others are the phone pictures taken on site on the evening of 2026-10-31 (bays 2, 3 and 4). "correct" compares with the hand labels; the model was trained on all of these frames, so leave-one-frame-out (slot-classifier.md) is the honest number.</p>
+<div class="grid" id="classifier"></div>
+
 <h2>Example 1 &mdash; reference scene with hand-labelled slots</h2>
 <p class="muted">Slots drawn by hand once; every frame is decided automatically and compared with the hand labels.</p>
 <div class="grid" id="golden"></div>
@@ -256,8 +304,10 @@ async function loadExample(e){
   try{
     const d=await (await fetch(`/demo/examples/${e.name}.json`)).json();
     el.querySelector('img').src=`/demo/examples/${e.name}.jpg`;
-    const score=d.truth_slots?`<span class="ok">${d.correct}/${d.truth_slots} correct</span> vs hand labels${d.kind==='auto3'?` over ${d.frames} images &middot; ${d.slots} slots proposed automatically`:''} &middot; `:`${d.slots} slots proposed &middot; `;
-    el.querySelector('.meta .muted').outerHTML=`<p>${pills(d)}</p><p class="muted">${score}${d.bikes} bikes detected &middot; ${d.ms} ms</p>`;
+    const wrong=d.wrong&&d.wrong.length?` (hooks ${d.wrong.join(', ')} wrong)`:'';
+    const score=d.truth_slots?`<span class="ok">${d.correct}/${d.truth_slots} correct</span> vs hand labels${wrong}${d.kind==='auto3'?` over ${d.frames} images &middot; ${d.slots} slots proposed automatically`:''} &middot; `:`${d.slots} slots proposed &middot; `;
+    const tail=d.kind==='classifier'?`${d.slots} slots drawn once &middot; per-slot classifier &middot; ${d.ms} ms`:`${d.bikes} bikes detected &middot; ${d.ms} ms`;
+    el.querySelector('.meta .muted').outerHTML=`<p>${pills(d)}</p><p class="muted">${score}${tail}</p>`;
   }catch(err){el.querySelector('.meta .muted').textContent='failed: '+err;}
 }
 (async()=>{

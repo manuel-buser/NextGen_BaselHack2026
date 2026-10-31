@@ -106,3 +106,28 @@ DEMO_PREWARM = _env("DEMO_PREWARM", True)   # compute the /demo example images i
 PULL_CAMERAS = _env("PULL_CAMERAS", "live01=http://192.168.21.95/snapshot")
 PULL_INTERVAL = _env("PULL_INTERVAL", 5.0)     # seconds between snapshots per camera
 PULL_TIMEOUT = _env("PULL_TIMEOUT", 10.0)
+
+# --- slot classifier (second approach: fixed slot polygons + per-crop CNN, see documentation/slot-classifier.md)
+ENGINE = _env("ENGINE", "detector")      # "detector" = YOLO + geometry (occupancy.py); "classifier" = slotcls per-crop CNN
+SLOTCLS_MODEL = Path(_env("SLOTCLS_MODEL", str(ROOT / "assets" / "models" / "slotcls_demo.pth")))
+SLOTCLS_BACKBONE = _env("SLOTCLS_BACKBONE", "mobilenet_v3_small")   # torchvision ImageNet backbone
+SLOTCLS_INPUT = _env("SLOTCLS_INPUT", 96)          # crop side in pixels fed to the classifier
+SLOTCLS_MARGIN = _env("SLOTCLS_MARGIN", 0.0)       # grow each slot polygon by this fraction before cropping (0 was best on the demo frame)
+SLOTCLS_K_FRAMES = _env("SLOTCLS_K_FRAMES", 5)     # majority vote window (hysteresis: OCCUPIED_ABOVE / FREE_BELOW)
+SLOTCLS_MIN_FRAMES = _env("SLOTCLS_MIN_FRAMES", 2) # votes needed before a slot leaves "unknown"
+SLOTCLS_UNSURE_BAND = _env("SLOTCLS_UNSURE_BAND", 0.1)   # |p - 0.5| below this -> no vote in this frame
+SLOTCLS_BLUR_PERSONS = _env("SLOTCLS_BLUR_PERSONS", True)  # run the YOLO detector only to blur persons in previews
+DEMO_LAYOUT = ROOT / "assets" / "pictures" / "DemoPictures" / "demo_picture.layout.json"   # 19 hooks, camera demo01
+SEED_DEMO_LAYOUT = _env("SEED_DEMO_LAYOUT", True)   # load DEMO_LAYOUT for camera demo01 at start (classifier engine)
+# the live camera films the same 19 hooks the demo polygons were drawn on: seed them for these camera ids too
+# (slot ids renamed, classifier engine); a layout saved under data/layouts/<id>.json wins. "" = only demo01.
+DEMO_LAYOUT_CAMERAS = [c.strip() for c in _env("DEMO_LAYOUT_CAMERAS", "live01").split(",") if c.strip()]
+DEMO_LABELS = DEMO_LAYOUT.with_name("demo_picture.labels.json")   # hand labels of the demo picture (for /demo)
+
+# --- app (push mode, forward.py) ------------------------------------------
+# The app (code/app) normally polls GET /cameras/{id}/status itself. Set APP_URL to push every new status to it
+# instead (an app on a server that cannot reach this laptop). APP_RACKS maps camera id -> rack id in the app.
+APP_URL = _env("APP_URL", "")                 # e.g. http://192.168.21.50:8080 or https://bikeslot.example.org
+APP_RACKS = _env("APP_RACKS", "live01=MX-CAM")  # "camera=rack,camera2=rack2"
+APP_TOKEN = _env("APP_TOKEN", "")             # the app's VISION_TOKEN, sent as X-Vision-Token
+APP_TIMEOUT = _env("APP_TIMEOUT", 5.0)
