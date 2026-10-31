@@ -1,0 +1,31 @@
+{
+  "camera_id": "memox_01",
+  "layout": "memox_01.layout.json",
+  "notes": "Memox wall rack, phone picture of 2026-10-31 (night), 19 hooks between two pillars numbered left to right; layout found by code/scripts/slotcls_hooks.py. Labelled by eye: a hook is occupied when a bike hangs on it, leans on it, or a bike body (wheel, frame, basket) fills most of its column; a handlebar or bar end reaching into the column does not occupy it. Bay 2, the camera bay (2NICE graffiti).",
+  "frames": [
+    {
+      "file": "memox_01.jpeg",
+      "slots": {
+        "memox_01-S01": "free",
+        "memox_01-S02": "free",
+        "memox_01-S03": "occupied",
+        "memox_01-S04": "occupied",
+        "memox_01-S05": "occupied",
+        "memox_01-S06": "free",
+        "memox_01-S07": "free",
+        "memox_01-S08": "occupied",
+        "memox_01-S09": "free",
+        "memox_01-S10": "free",
+        "memox_01-S11": "occupied",
+        "memox_01-S12": "occupied",
+        "memox_01-S13": "free",
+        "memox_01-S14": "free",
+        "memox_01-S15": "free",
+        "memox_01-S16": "occupied",
+        "memox_01-S17": "occupied",
+        "memox_01-S18": "occupied",
+        "memox_01-S19": "occupied"
+      }
+    }
+  ]
+}

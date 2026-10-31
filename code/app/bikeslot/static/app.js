@@ -2,7 +2,6 @@ const heroEl = document.getElementById("hero");
 const racksEl = document.getElementById("racks");
 const countEl = document.getElementById("rack-count");
 const keyEl = document.getElementById("map-key");
-const noteEl = document.getElementById("note");
 const updatedEl = document.getElementById("updated");
 const refreshIco = document.getElementById("refresh-ico");
 const mapEl = document.getElementById("map");
@@ -20,7 +19,33 @@ const ICONS = {
   entryKey: icon(ARROW_IN),
   plus: icon('<path d="M12 6v12M6 12h12"/>'),
   minus: icon('<path d="M6 12h12"/>'),
+  info: icon('<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5"/><circle cx="12" cy="7.8" r="0.6" fill="currentColor"/>'),
 };
+
+/* Info buttons hold text that is read once: shown on hover, keyboard focus or a tap, hidden again by Escape or a tap
+   elsewhere (.is-shut keeps it hidden under the pointer or focus until they leave) */
+function setInfo(box, open) {
+  box.classList.toggle("is-open", open);
+  box.querySelector(".info__btn").setAttribute("aria-expanded", String(open));
+}
+
+document.addEventListener("click", (event) => {
+  const box = event.target.closest(".info");
+  document.querySelectorAll(".info.is-open").forEach((other) => other !== box && setInfo(other, false));
+  if (box && event.target.closest(".info__btn")) {
+    box.classList.remove("is-shut");
+    setInfo(box, !box.classList.contains("is-open"));
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  document.querySelectorAll(".info").forEach((box) => {
+    setInfo(box, false);
+    box.classList.add("is-shut");
+  });
+});
+document.addEventListener("mouseleave", (event) => event.target.classList?.contains("info") && event.target.classList.remove("is-shut"), true);
+document.addEventListener("focusout", (event) => event.target.closest?.(".info")?.classList.remove("is-shut"));
 /* Every chip has its own icon shape, so the state never depends on colour */
 const CHIP_ICONS = {
   live: '<circle class="ring" cx="6" cy="6" r="3" fill="currentColor"/><circle cx="6" cy="6" r="5.5" fill="currentColor" opacity="0.18"/><circle cx="6" cy="6" r="3" fill="currentColor"/>',
@@ -28,17 +53,15 @@ const CHIP_ICONS = {
   starting: '<circle cx="6" cy="6" r="4.6" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3"/><path class="arc" d="M6 1.4a4.6 4.6 0 0 1 4.6 4.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
   stale: '<circle cx="6" cy="6" r="5.6" fill="currentColor"/><path class="hands" d="M6 3.3V6l1.9 1.2" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
   none: '<circle cx="6" cy="6" r="5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4.6 4.7a1.45 1.45 0 1 1 2 1.35c-.42.18-.6.5-.6.95" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="6" cy="8.7" r="0.75" fill="currentColor"/>',
-  demo: '<path d="M4.4 1.3h3.2M5 1.3v3.3L2.3 9.3a.9.9 0 0 0 .8 1.4h5.8a.9.9 0 0 0 .8-1.4L7 4.6V1.3" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>',
   real: '<path d="M1.2 3.6h2l.9-1.4h3.8l.9 1.4h2v6.2H1.2z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><circle cx="6" cy="6.6" r="1.7" fill="none" stroke="currentColor" stroke-width="1.2"/>',
 };
 const chip = (kind, label) => `<span class="chip chip--${kind}"><svg class="chip__i" viewBox="0 0 12 12" aria-hidden="true">${CHIP_ICONS[kind]}</svg>${esc(label)}</span>`;
-const DEMO_CHIP = chip("demo", "Demo data");
 const REAL_CHIP = chip("real", "Real camera");
-const CAMERA_MARK = `<svg class="pin__cam" viewBox="0 0 12 12" aria-hidden="true">${CHIP_ICONS.real}</svg>`;
+const cameraMark = (cls) => `<svg class="${cls}" viewBox="0 0 12 12" aria-hidden="true">${CHIP_ICONS.real}</svg>`;
 let anyDemo = false; // "Real camera" only means something next to demo racks
 
 function sourceChip(rack) {
-  return rack.demo ? DEMO_CHIP : anyDemo ? REAL_CHIP : "";
+  return !rack.demo && anyDemo ? REAL_CHIP : "";
 }
 
 function esc(text) {
@@ -87,6 +110,30 @@ function planHtml(rack, changed = [], small = false) {
   return `<div class="${wrap}" role="img" aria-label="${label}"><div class="plan${small ? " plan--sm" : ""}${cols > 10 ? " plan--dense" : ""}" style="grid-template-columns: repeat(${cols}, minmax(0, 1fr))">${cells.join("")}</div>${layout ? ICONS.entry : ""}</div>`;
 }
 
+/* Space numbers only where they fit, measured on the drawn plan: every space, else 1 and every 5th, else the first
+   and the last. Numbers wider than their cell sit under it (.is-sparse). */
+function fitLabels(scope) {
+  scope.querySelectorAll(".plan").forEach((plan) => {
+    const spans = [...plan.querySelectorAll(".cell > span")];
+    plan.classList.remove("is-sparse");
+    spans.forEach((span) => { span.hidden = false; });
+    if (!spans.length) return;
+    const style = getComputedStyle(plan);
+    const cell = parseFloat(style.gridTemplateColumns);
+    const pitch = cell + parseFloat(style.columnGap);
+    const need = Math.max(...spans.map((span) => span.offsetWidth)) + 4;
+    if (cell >= need) return;
+    const ids = spans.map((span) => Number(span.textContent));
+    const last = Math.max(...ids);
+    const fifth = last - (last % 5);
+    const shown = pitch * 5 >= need + 6
+      ? (id) => id === 1 || id % 5 === 0 || (id === last && (last - fifth) * pitch >= need + 4)
+      : (id) => id === 1 || id === last;
+    plan.classList.add("is-sparse");
+    spans.forEach((span, i) => { span.hidden = !shown(ids[i]); });
+  });
+}
+
 function freeSpacesText(rack) {
   const runs = [];
   rack.slots.filter((s) => s.state === "free").forEach((s) => {
@@ -100,14 +147,26 @@ function freeSpacesText(rack) {
 
 const PLAN_KEY = `<div class="plan-key" aria-hidden="true"><span class="plan-key__i"><span class="cell cell--free"></span>Free</span><span class="plan-key__i"><span class="cell cell--taken"></span>Taken</span>`;
 
+const ENTRANCE_KEY = `<span class="plan-key__i">${ICONS.entryKey}Entrance</span>`;
+
+/* A location's racks as stacked rows, each with its free count at the end */
+function partsHtml(rack, changed) {
+  const rows = rack.parts.map((part, i) => {
+    const live = part.status === "ok";
+    return `<div class="part">${planHtml(part, changed[i])}<span class="part__n${live ? "" : " part__n--unknown"}">${!part.demo && anyDemo ? cameraMark("part__cam") : ""}${live ? part.free : "?"}</span></div>`;
+  });
+  return `<div class="parts">${rows.join("")}</div>${PLAN_KEY}${ENTRANCE_KEY}</div>`;
+}
+
 /* The open tile's body: the plan, the free spaces and the key (the predictions are added below by placeForecast) */
 function bodyHtml(rack, changed) {
+  if (rack.parts) return partsHtml(rack, changed);
   const live = rack.status === "ok";
   const plan = rack.layout || (live && rack.slots.length) ? planHtml(rack, changed) : "";
   const line = live && rack.slots.length
     ? `<p class="plan-free">${freeSpacesText(rack)}</p>`
     : `<p class="plan-free plan-free--quiet">${live ? "This rack reports a count only." : "No live data for the spaces right now."}</p>`;
-  const key = plan ? `${PLAN_KEY}${rack.layout ? `<span class="plan-key__i">${ICONS.entryKey}Entrance</span>` : ""}</div>` : "";
+  const key = plan ? `${PLAN_KEY}${rack.layout ? ENTRANCE_KEY : ""}</div>` : "";
   return `${plan}${line}${key}`;
 }
 
@@ -115,6 +174,9 @@ const BIKE_M_PER_MIN = 250; // 15 km/h
 const WALK_M_PER_MIN = 5000 / 60;
 const EARTH_M = 6371000;
 let targetPos = null; // {lat, lng}: the chosen destination or the browser's position; never sent anywhere
+const DETOUR = 1.3; // a ride is longer than the straight line
+let myPos = null; // {lat, lng}: the browser's position for the arrival line; only the ride's minutes are sent
+let askPos = false; // the browser has not decided yet: the open tile offers a tap to share the position
 
 function distanceM(a, b) {
   const rad = Math.PI / 180;
@@ -128,9 +190,17 @@ function distanceText(metres) {
   return rounded < 1000 ? `${rounded} m` : `${(metres / 1000).toFixed(1)} km`;
 }
 
+/* Where a line to this entry ends: a location's nearest rack with a free space, else its nearest rack */
+function spotFor(rack, point) {
+  if (!rack.parts) return rack.location;
+  const placed = rack.parts.filter((p) => p.location);
+  const open = placed.filter((p) => p.status === "ok" && p.free > 0);
+  return (open.length ? open : placed).reduce((a, b) => (distanceM(point, b.location) < distanceM(point, a.location) ? b : a)).location;
+}
+
 function metaHtml(rack) {
   const extra = [];
-  if (targetPos && rack.location) extra.push(distanceText(distanceM(targetPos, rack.location)));
+  if (targetPos && rack.location) extra.push(distanceText(distanceM(targetPos, spotFor(rack, targetPos))));
   if (rack.forecast && !rack.forecast.learning && rack.forecast.usually_full_by) extra.push(`full by ${rack.forecast.usually_full_by}`);
   return `${esc(ageText(rack))}${extra.length ? `<span class="tile__extra">${esc(extra.join(", "))}</span>` : ""}`;
 }
@@ -225,6 +295,7 @@ function updateTile(tile, rack, changed) {
   tile.fill.style.width = live ? `${Math.round(((rack.capacity - rack.free) / Math.max(1, rack.capacity)) * 100)}%` : "0%";
   setHtml(tile.meta, metaHtml(rack));
   setHtml(tile.live, bodyHtml(rack, changed));
+  fitLabels(tile.live);
 }
 
 function renderMeta() {
@@ -252,6 +323,12 @@ function defaultRackId(racks) {
   return live.length ? live.reduce((a, b) => (b.free > a.free ? b : a)).id : racks[0].id;
 }
 
+function slotChanges(rack) {
+  const before = lastSlotStates.get(rack.id) || [];
+  lastSlotStates.set(rack.id, rack.slots.map((s) => s.state));
+  return rack.slots.map((s, i) => before.length > 0 && before[i] !== s.state);
+}
+
 function renderRacks(racks) {
   if (!tilesBuilt) {
     racksEl.innerHTML = "";
@@ -274,9 +351,7 @@ function renderRacks(racks) {
   if (selectedId !== null && !ids.has(selectedId)) selectedId = null;
   if (selectedId === null && !userClosed) selectedId = defaultRackId(racks);
   racks.forEach((rack, index) => {
-    const before = lastSlotStates.get(rack.id) || [];
-    const changed = rack.slots.map((s, i) => before.length > 0 && before[i] !== s.state);
-    lastSlotStates.set(rack.id, rack.slots.map((s) => s.state));
+    const changed = rack.parts ? rack.parts.map(slotChanges) : slotChanges(rack);
     let tile = tiles.get(rack.id);
     if (!tile) {
       tile = makeTile(rack, index);
@@ -292,12 +367,28 @@ function renderRacks(racks) {
 function selectRack(id, fly = true) {
   const rack = lastRacks.find((r) => r.id === id);
   if (!rack) return;
+  const opening = id !== selectedId;
   selectedId = id;
   userClosed = false;
   if (fly && map && rack.location) flyToRack(rack, Math.max(map.getZoom(), DETAIL_ZOOM + 1));
   renderRacks(lastRacks);
   updateMarkers(lastRacks);
-  if (twoPanes.matches) tiles.get(id)?.article.scrollIntoView({ block: "nearest", behavior: reduceMotion.matches ? "auto" : "smooth" });
+  const tile = tiles.get(id);
+  const behavior = reduceMotion.matches ? "auto" : "smooth";
+  if (twoPanes.matches) tile?.article.scrollIntoView({ block: "nearest", behavior });
+  else if (fly && tile) reveal(tile, opening, behavior);
+}
+
+/* One column: the opened tile is scrolled to the top once it has opened, so its plan and chart are in view */
+function reveal(tile, opening, behavior) {
+  const go = () => tile.article.scrollIntoView({ block: "start", behavior });
+  if (!opening || reduceMotion.matches) return go();
+  const done = (event) => {
+    if (event.target !== tile.body) return;
+    tile.body.removeEventListener("transitionend", done);
+    if (tile.article.dataset.rack === selectedId) go(); // not when another pick came first
+  };
+  tile.body.addEventListener("transitionend", done);
 }
 
 racksEl.addEventListener("click", (event) => {
@@ -383,11 +474,21 @@ function forecastLines(data) {
   return lines;
 }
 
+function rideMinutes(rack) {
+  if (!myPos || !rack?.location) return null;
+  return Math.max(1, Math.ceil((distanceM(myPos, spotFor(rack, myPos)) * DETOUR) / BIKE_M_PER_MIN));
+}
+
+function arrivalHtml(data) {
+  const arrival = data.arrival;
+  if (arrival && known(arrival.free)) return `<li class="arrival">${esc(`About ${arrival.free} free when you arrive (in ${arrival.minutes} min)`)}</li>`;
+  return askPos ? `<li><button type="button" class="dest-near pos-ask">${ICONS.locate}On arrival</button></li>` : "";
+}
+
 function renderForecast(data, animate) {
   const el = document.getElementById("forecast");
   if (!el) return;
   forecastData = data;
-  const rack = lastRacks.find((r) => r.id === selectedId);
   let state = "error";
   let html = '<p class="forecast-quiet">Predictions are not available right now.</p>';
   if (data && Array.isArray(data.typical) && data.insights) {
@@ -396,8 +497,7 @@ function renderForecast(data, animate) {
     html = `<h3 class="forecast-title">Free spaces through the day</h3>
       ${chartSvg(data, Math.round(el.clientWidth) || 320, day, animate)}
       <p class="chart-key"><span class="key key-today"></span>Today <span class="key key-typical"></span>Typical ${day}</p>
-      <ul class="forecast-lines">${forecastLines(data).map((line) => `<li>${esc(line)}</li>`).join("")}</ul>
-      ${(rack && rack.demo) || data.clock === "demo" ? `<p class="forecast-note">${DEMO_CHIP}This history is made up.</p>` : ""}`;
+      <ul class="forecast-lines">${forecastLines(data).map((line) => `<li>${esc(line)}</li>`).join("")}${arrivalHtml(data)}</ul>`;
   }
   el.dataset.state = state;
   if (html !== forecastHtml) {
@@ -410,7 +510,8 @@ async function loadForecast() {
   const id = selectedId;
   if (id === null) return;
   const token = ++forecastToken;
-  const data = await fetch(`/api/racks/${encodeURIComponent(id)}/history`, { cache: "no-store" })
+  const minutes = rideMinutes(lastRacks.find((r) => r.id === id));
+  const data = await fetch(`/api/racks/${encodeURIComponent(id)}/history${minutes ? `?minutes=${minutes}` : ""}`, { cache: "no-store" })
     .then((response) => (response.ok ? response.json() : null))
     .catch(() => null);
   if (token !== forecastToken || id !== selectedId) return; // a newer request or another rack took over
@@ -421,7 +522,10 @@ async function loadForecast() {
 let resizeTimer = 0;
 window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => forecastData && renderForecast(forecastData, false), 150); // the chart is drawn at the panel's width
+  resizeTimer = setTimeout(() => {
+    fitLabels(document);
+    if (forecastData) renderForecast(forecastData, false); // the chart is drawn at the panel's width
+  }, 150);
 });
 
 /* Summary: built once on the first data (replacing the skeleton), then only its parts change */
@@ -454,8 +558,8 @@ function renderHero(racks) {
   }
 }
 
-/* Map with three levels of detail: a count dot when zoomed out, count plus word at street level,
-   the rack card with its spaces when zoomed in. A pin re-renders (and animates) only when its content changes. */
+/* Map with three levels of detail: a count dot when zoomed out, count plus word at street level, and when zoomed in
+   the selected rack's card with its spaces. A pin re-renders (and animates) only when its content changes. */
 const DETAIL_ZOOM = 18;
 const COUNT_ZOOM = 16;
 let map = null;
@@ -467,26 +571,35 @@ function levelFor(zoom) {
 }
 
 
-/* One pin per rack: the count when zoomed out, count and word at street level, the rack card with its plan when
-   zoomed in. enter >= 0 adds the entrance animation with that stagger step. */
+/* One pin per rack: the count when zoomed out, count and word from street level, and when zoomed in the card with
+   the plan for the selected rack only. enter >= 0 adds the entrance animation with that stagger step. */
 function pinHtml(rack, level, enter = -1) {
   const live = rack.status === "ok";
   const real = !rack.demo && anyDemo;
   const selected = rack.id === selectedId ? " is-selected" : "";
   const entering = enter >= 0 ? ` is-entering" style="--i: ${enter}` : "";
-  if (level === "detail") {
+  if (level === "detail" && selected) {
     const [kind, label] = chipFor(rack);
     const source = sourceChip(rack);
-    const plan = rack.layout || (live && rack.slots.length) ? planHtml(rack, [], true) : "";
+    const plan = rack.parts ? segmentsHtml(rack) : rack.layout || (live && rack.slots.length) ? planHtml(rack, [], true) : "";
     return `<div class="mcard${selected}${entering}">
       <div class="mcard__head"><span class="mcard__name">${esc(rack.name)}</span>${chip(kind, label)}</div>
       <p class="count${live ? "" : " count--unknown"}"><span class="count__n">${live ? rack.free : "?"}</span>free of ${rack.capacity}${source ? `<span class="mcard__src">${source}</span>` : ""}</p>
       ${plan}<span class="mcard__stem"></span></div>`;
   }
   const state = !live ? " pin--none" : rack.free === 0 ? " pin--full" : "";
-  const word = level === "count" && live ? '<span class="pin__l">free</span>' : "";
-  const tip = `${rack.name}${rack.demo ? ", demo data" : real ? ", real camera" : ""}`;
-  return `<span class="pin${state}${rack.demo ? " pin--demo" : ""}${selected}${entering}">${real ? CAMERA_MARK : ""}<span class="pin__n">${live ? rack.free : "?"}</span>${word}</span><span class="pin-tip">${esc(tip)}</span>`;
+  const word = level !== "dot" && live ? '<span class="pin__l">free</span>' : "";
+  const tip = `${rack.name}${real ? ", real camera" : ""}`;
+  return `<span class="pin${state}${selected}${entering}">${real ? cameraMark("pin__cam") : ""}<span class="pin__n">${live ? rack.free : "?"}</span>${word}</span><span class="pin-tip">${esc(tip)}</span>`;
+}
+
+/* A location's racks on its map card: one segment per rack, as wide as its share of the spaces, with its free count */
+function segmentsHtml(rack) {
+  const segments = rack.parts.map((part) => {
+    const state = part.status !== "ok" ? "none" : part.free === 0 ? "full" : "free";
+    return `<span class="seg seg--${state}" style="flex-grow: ${part.capacity}">${state === "none" ? "?" : part.free}</span>`;
+  });
+  return `<div class="segs">${segments.join("")}</div>`;
 }
 
 /* Rack plans on the map at real size: each space is a polygon in metres (space_m along a row and across it,
@@ -568,7 +681,7 @@ function ensureHatch() {
   svg.prepend(defs);
 }
 
-/* Draws the rack's plan for this zoom and returns how far above the rack a pin must sit to clear it */
+/* Draws the rack's plan for this zoom and returns its box in map pixels, or null when it is not drawn */
 function updatePlan(rack, zoom) {
   const plan = planFor(rack);
   const live = rack.status === "ok";
@@ -584,9 +697,9 @@ function updatePlan(rack, zoom) {
     plan.mode = mode;
     ensureHatch();
   }
-  if (!mode) return 0;
-  const centre = map.project([rack.location.lat, rack.location.lng], zoom).y;
-  return Math.ceil(centre - Math.min(...plan.points.map((p) => map.project(p, zoom).y))) + 6;
+  if (!mode) return null;
+  const points = plan.points.map((p) => map.project(p, zoom));
+  return { left: Math.min(...points.map((p) => p.x)), right: Math.max(...points.map((p) => p.x)), top: Math.min(...points.map((p) => p.y)) };
 }
 
 function updateMarkers(racks) {
@@ -595,9 +708,14 @@ function updateMarkers(racks) {
   const level = levelFor(zoom);
   racks.filter((r) => r.location).forEach((rack, index) => {
     const html = pinHtml(rack, level);
-    const lift = rack.layout ? updatePlan(rack, zoom) : 0;
+    // the pin clears the plans drawn under it (a location's plans reach far to the sides)
+    const at = map.project([rack.location.lat, rack.location.lng], zoom);
+    const tops = (rack.parts || [rack]).filter((r) => r.layout && r.location).map((r) => updatePlan(r, zoom))
+      .filter((box) => box && box.left <= at.x && at.x <= box.right).map((box) => box.top);
+    const lift = tops.length ? Math.ceil(at.y - Math.min(...tops)) + 6 : 0;
+    const shape = level !== "detail" ? level : rack.id === selectedId ? "card" : "count"; // the card follows the selection
     let marker = markers.get(rack.id);
-    const enter = !marker ? Math.min(index, 6) : marker.level !== level ? 0 : -1; // new pin or a new level: it enters
+    const enter = !marker ? Math.min(index, 6) : marker.shape !== shape ? 0 : -1; // new pin or a new shape: it enters
     const icon = () => L.divIcon({ className: "pin-anchor", html: enter >= 0 ? pinHtml(rack, level, enter) : html, iconSize: [0, 0] });
     if (!marker) {
       marker = L.marker([rack.location.lat, rack.location.lng], { icon: icon(), keyboard: true, title: rack.name });
@@ -608,12 +726,13 @@ function updateMarkers(racks) {
       marker.setIcon(icon());
     }
     marker.pinHtml = html;
-    marker.level = level;
+    marker.shape = shape;
     marker.setZIndexOffset(rack.id === selectedId ? 1000 : 0);
     const el = marker.getElement();
     el.style.setProperty("--lift", `${lift}px`); // moved in place: a new icon would replay its entrance
     el.classList.toggle("is-lifted", lift > 0);
     el.classList.toggle("is-none", rack.status !== "ok");
+    if (shape === "card") fitLabels(el);
   });
 }
 
@@ -699,9 +818,9 @@ function addDestControl() {
         <datalist id="dest-places"></datalist>
       </form>
       <div class="dest-more"><span class="dest-hint">or tap the map</span>
-      <button type="button" class="dest-near" id="nearest">${ICONS.locate}Nearest to me</button></div>
-      <p class="dest-result" id="dest-result" aria-live="polite" hidden></p>
-      <p class="dest-note">A typed place is looked up with OpenStreetMap's search through this server and is not stored. A place from the list, a tap on the map and your position stay in this browser.</p></div>`;
+      <button type="button" class="dest-near" id="nearest">${ICONS.locate}Nearest to me</button>
+      <span class="info"><button type="button" class="info__btn" aria-label="About the place search" aria-expanded="false" aria-describedby="dest-note">${ICONS.info}</button><span class="info__pop dest-note" id="dest-note">A typed place is looked up with OpenStreetMap's search through this server and is not stored. A place from the list, a tap on the map and your position stay in this browser.</span></span></div>
+      <p class="dest-result" id="dest-result" aria-live="polite" hidden></p></div>`;
     L.DomEvent.disableClickPropagation(box);
     L.DomEvent.disableScrollPropagation(box);
     return box;
@@ -783,7 +902,10 @@ function goTo(point, how, name = "") {
 function answer() {
   targetPos = { lat: dest.lat, lng: dest.lng };
   const bike = dest.how === "bike";
-  const placed = lastRacks.filter((r) => r.location).map((r) => [r, distanceM(targetPos, r.location)]).sort((a, b) => a[1] - b[1]);
+  const placed = lastRacks.filter((r) => r.location).map((r) => {
+    const at = spotFor(r, targetPos);
+    return [r, distanceM(targetPos, at), at];
+  }).sort((a, b) => a[1] - b[1]);
   const pick = placed.find(([r]) => r.status === "ok" && r.free > 0);
   const to = [targetPos.lat, targetPos.lng];
   const name = dest.name ? `<span class="dest-name">${esc(dest.name)}</span>` : "";
@@ -798,13 +920,13 @@ function answer() {
     renderMeta(); // the tiles show each rack's distance
     return;
   }
-  const [rack, metres] = pick;
+  const [rack, metres, at] = pick;
   const minutes = Math.max(1, Math.ceil(metres / (bike ? BIKE_M_PER_MIN : WALK_M_PER_MIN)));
   const reply = `${rack.name}: ${rack.free} free, about ${minutes} min ${bike ? "by bike" : "walk"}`;
   const [closest, nearestM] = placed[0];
   const far = nearestM > FAR_M ? `. ${dest.name || "This place"} is ${distanceText(nearestM)} from the nearest rack` : "";
   say((closest === rack ? reply : `${closest.name} ${closest.status === "ok" ? "is full" : "has no live data"}, next: ${reply}`) + far);
-  const from = [rack.location.lat, rack.location.lng];
+  const from = [at.lat, at.lng];
   const middle = [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2];
   route.push(
     L.polyline([from, to], { className: "dest-line", interactive: false }),
@@ -826,12 +948,60 @@ function nearMe() {
   } else {
     say("Finding your position");
     navigator.geolocation.getCurrentPosition(
-      (position) => goTo({ lat: position.coords.latitude, lng: position.coords.longitude }, "bike"),
+      (position) => {
+        usePos(position);
+        const token = forecastToken;
+        goTo(myPos, "bike");
+        if (token === forecastToken) loadForecast(); // the answer kept the selection, so nothing loaded yet
+      },
       (error) => say(GEO_ERRORS[error.code] || GEO_ERRORS[2]),
       { timeout: 10000, maximumAge: 60000 },
     );
   }
 }
+
+/* The arrival line's start: the position is read only when the browser already allows it, after a tap on the
+   tile's offer or by "Nearest to me"; never asked for on load */
+function usePos(position) {
+  myPos = { lat: position.coords.latitude, lng: position.coords.longitude };
+  askPos = false;
+}
+
+function locate() {
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      usePos(position);
+      loadForecast();
+    },
+    () => {
+      askPos = false;
+      if (forecastData) renderForecast(forecastData, false);
+    },
+    { timeout: 10000, maximumAge: 60000 },
+  );
+}
+
+function decidePos(state) {
+  if (state === "denied") myPos = null;
+  askPos = state === "prompt" && !myPos;
+  if (state === "granted" && !myPos) locate();
+  if (forecastData) renderForecast(forecastData, false);
+}
+
+if (navigator.geolocation && window.isSecureContext) {
+  if (navigator.permissions?.query) {
+    navigator.permissions.query({ name: "geolocation" }).then((status) => {
+      decidePos(status.state);
+      status.addEventListener("change", () => decidePos(status.state));
+    }, () => decidePos("prompt"));
+  } else {
+    decidePos("prompt"); // cannot tell: a tap asks
+  }
+}
+
+racksEl.addEventListener("click", (event) => {
+  if (event.target.closest(".pos-ask")) locate();
+});
 
 
 heroEl.addEventListener("click", (event) => {
@@ -856,7 +1026,6 @@ async function refresh() {
     }
     renderPlaces(data.places);
     if (dest && map) answer(); // a rack that filled up hands over to the next one
-    noteEl.hidden = !data.racks.some((r) => r.demo);
     updatedEl.innerHTML = `Last refresh <span class="num">${esc(new Date().toLocaleTimeString())}</span>`;
     restart(refreshIco, "is-spinning");
   } catch (err) {

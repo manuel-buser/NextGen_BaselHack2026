@@ -125,7 +125,6 @@ h1, h2 { text-wrap: balance; }
 .chip-serious svg { fill: var(--serious); }
 .chip-critical svg { fill: var(--critical); }
 .chip-muted svg { fill: none; stroke: var(--muted); stroke-width: 2; }
-.chip-demo { border-style: dashed; color: var(--ink-2); }
 /* The real camera among demo racks: the only filled chip, found at a glance */
 .chip-real { background: var(--link); border-color: transparent; color: var(--plane); }
 .chip-real svg { width: 12px; height: 12px; fill: none; }
@@ -138,14 +137,51 @@ h1, h2 { text-wrap: balance; }
 .stat .label { color: var(--ink-2); font-size: 0.875rem; }
 .stat .stat-value { font-size: 1.75rem; font-weight: 700; line-height: 1.1; }
 .stat .sub { color: var(--ink-2); font-size: 0.875rem; }
-.stat .chip { width: fit-content; }
+.stat .sub:empty { display: none; }
 .section { display: grid; gap: 10px; }
 .section h2 { font-family: var(--display); font-weight: 600; font-size: 1.125rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); }
-.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 20px; margin: 0; background: var(--surface); border: 1px solid var(--ring); border-radius: 14px; padding: 12px 16px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 20px; margin: 0; }
 .kv dt { color: var(--ink-2); }
 .kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .error { color: var(--critical); }
 .empty { color: var(--muted); }
+
+/* Heading with an info button; the tip spans the section from below the heading */
+.section-head { position: relative; display: flex; align-items: center; gap: 8px; }
+.info { display: inline-flex; }
+.info-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--ink-2);
+  background: var(--plane);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.info-btn:hover, .info-btn[aria-expanded="true"] { border-color: var(--accent); color: var(--ink); }
+.info-btn svg { width: 14px; height: 14px; }
+.info-tip {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 10;
+  width: min(100%, 460px);
+  display: grid;
+  gap: 6px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  color: var(--ink-2);
+  font-size: 0.875rem;
+}
+.info-tip[hidden] { display: none; }
+.info-tip::before { content: ""; position: absolute; left: 0; right: 0; top: -8px; height: 8px; } /* the pointer can cross the gap without closing it */
+@media (max-width: 639px) { .info-btn { width: 32px; height: 32px; } }
 
 /* Admin dashboard: cards, instruments, sparklines and the activity strip. Colour only repeats what an icon and a word say. */
 .stat-value .of { font-size: 1rem; font-weight: 400; color: var(--ink-2); margin-left: 2px; }
@@ -176,7 +212,6 @@ h1, h2 { text-wrap: balance; }
 .ico svg { width: 10px; height: 10px; }
 .ico-warning svg { fill: var(--warning); }
 .ico-critical svg { fill: var(--critical); }
-.na { color: var(--ink-2); font-size: 0.875rem; }
 
 .instruments { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding-block: 2px; }
 .instrument { margin: 0; display: grid; gap: 6px; justify-items: center; text-align: center; min-width: 0; }
@@ -201,30 +236,16 @@ h1, h2 { text-wrap: balance; }
 .block-bar[data-level="low"] .block-fill { background: var(--warning); }
 .block-mark { position: absolute; top: -5px; bottom: -5px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--ink); }
 
-.uptime { display: grid; gap: 6px; }
-.uptime-bar { position: relative; height: 6px; border-radius: 3px; background: var(--hairline); }
-.uptime-fill { position: absolute; top: 0; right: 0; bottom: 0; width: 0; border-radius: 3px; background: var(--accent); }
-.uptime-reboot {
-  position: absolute;
-  top: 50%;
-  display: grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  transform: translate(50%, -50%);
-  border-radius: 50%;
-  border: 2px solid var(--serious);
-  background: var(--surface);
-  color: var(--ink);
-}
-.uptime-reboot[hidden] { display: none; }
-.uptime-reboot svg { width: 10px; height: 10px; }
 .uptime-text { color: var(--ink-2); font-size: 0.8125rem; }
 .uptime-text b { color: var(--ink); }
 .card-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; color: var(--ink-2); font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
 .card-foot b { color: var(--ink); }
 .card-detect { color: var(--ink-2); font-size: 0.8125rem; }
 .card-detect b { color: var(--ink); }
+/* vision racks: the service's last preview, fetched through the app and refreshed with the status */
+.card-preview:empty { display: none; }
+.card-preview img { display: block; width: 100%; border-radius: 8px; background: color-mix(in oklab, var(--ink) 6%, var(--surface)); }
+.health-vision { color: var(--ink-2); font-size: 0.8125rem; overflow-wrap: anywhere; }
 .tag { display: inline-flex; align-items: center; gap: 4px; }
 .tag svg { width: 10px; height: 10px; }
 .card-error { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 8px; border-radius: 8px; background: color-mix(in oklab, var(--critical) 12%, var(--surface)); color: var(--ink); font-size: 0.8125rem; cursor: help; }
@@ -268,15 +289,13 @@ h1, h2 { text-wrap: balance; }
   .card.enter { animation: card-in 320ms ease-out both; }
   .card.pulse { animation: card-pulse 900ms ease-out; }
   .gauge-fill { transition: stroke-dasharray 700ms ease, stroke 300ms ease; }
-  .block-fill, .uptime-fill { transition: width 700ms ease; }
-  .uptime-reboot { transition: right 700ms ease; }
+  .block-fill { transition: width 700ms ease; }
   .mark { transition: left 3s linear; animation: mark-in 300ms ease-out; }
 }
 
 /* Data-flow diagram (admin) */
 .flow-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--ring); border-radius: 14px; padding: 8px 16px 4px; }
 .flow { display: block; min-width: 880px; width: 100%; height: auto; color: var(--ink); font-family: var(--body); }
-.flow figcaption { color: var(--muted); font-size: 0.875rem; padding: 6px 2px 8px; }
 .flow .edge { stroke: var(--muted); stroke-width: 1.5; fill: none; }
 .flow .edge-label { font-size: 12px; fill: var(--ink-2); }
 .flow .edge-note { font-size: 11px; fill: var(--muted); }
@@ -297,7 +316,12 @@ h1, h2 { text-wrap: balance; }
 .flow .pulse { fill: var(--accent); opacity: 0; }
 .flow .pulse.moving { opacity: 1; }
 .flow .arrowhead { fill: var(--muted); }
+.flow-detail { display: grid; gap: 8px; background: var(--surface); border: 1px solid var(--ring); border-radius: 14px; padding: 12px 16px; min-width: 0; }
+.flow-title { font-weight: 700; }
+.flow-how summary { width: fit-content; color: var(--link); font-size: 0.875rem; cursor: pointer; }
+.flow-how p { margin-top: 4px; max-width: 72ch; color: var(--ink-2); font-size: 0.875rem; }
 .flow-detail dt { white-space: nowrap; }
+.flow-detail dl:empty { display: none; }
 
 /* Zoom levels: --detail goes 0 to 1 while the view scale passes band() in admin.js; step labels fade out, the parts inside fade in */
 .flow { position: relative; }
@@ -359,3 +383,31 @@ h1, h2 { text-wrap: balance; }
 }
 .flow-steps button:hover { border-color: var(--accent); }
 .flow-steps button[aria-current="step"] { background: var(--accent-soft); border-color: var(--accent); font-weight: 700; }
+
+/* Theme toggle in the masthead, round like the diagram's buttons. The icon shows what a click gives: the moon while light, the sun while dark. */
+.theme-toggle {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--ink);
+  background: var(--plane);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.theme-toggle:hover { border-color: var(--accent); }
+.theme-toggle svg { width: 16px; height: 16px; }
+.theme-toggle .sun, [data-theme="dark"] .theme-toggle .moon { display: none; }
+[data-theme="dark"] .theme-toggle .sun { display: block; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .theme-toggle .moon { display: none; }
+  :root:not([data-theme="light"]) .theme-toggle .sun { display: block; }
+}
+/* Phones: the toggle shares the team row, the 64px being its width and the column gap */
+@media (max-width: 639px) {
+  .team { order: -2; flex-basis: calc(100% - 64px); }
+  .theme-toggle { order: -1; width: 40px; height: 40px; }
+}

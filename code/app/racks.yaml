@@ -1,27 +1,45 @@
-# One entry per camera-covered rack. The id is what the camera node and the detector use.
-# location puts the rack on the map (placeholder coordinates near Memox Basel SBB).
-# layout draws the rack plan: rows and cols of spaces, bearing in degrees clockwise from north (the direction
-# along a row from space 1 to the last space), entrance "start" (default) or "end" (which end people arrive
-# from). Spaces are numbered from the entrance along the bearing, row by row, row 1 on the left when looking
-# along the bearing; the detector's slot ids must follow this. Odd racks list spaces: [{id, x, y, w, h}, ...]
-# in grid units instead of rows/cols. The bearings are placeholders too.
-# camera makes the app poll the node instead of waiting for its posts (pull mode, see README):
-# camera: {url: "http://192.168.21.95"} with optional status_path, picture_path, poll_s, picture_every_s.
+# One entry per camera-covered rack; the id is what the camera node and the detector use.
+# location: the centre of the rack plan on the map.
+# layout: rows and cols of spaces; bearing in degrees clockwise from north (along a row from space 1 to the last);
+# entrance "start" (default) or "end" (the end people arrive from); space_m [along the row, depth] in metres
+# (default [0.7, 1.9]). Spaces are numbered from the entrance along the bearing, row by row, row 1 on the left
+# looking along the bearing; the detector's slot ids must follow this. Odd racks list spaces: [{id, x, y, w, h}, ...]
+# in grid units instead of rows/cols.
+# camera: the app polls the node instead of waiting for its posts (pull mode, see README):
+# {url: "http://192.168.21.95"} with optional status_path, picture_path, poll_s, picture_every_s.
+# group: racks with the same group are one location on the user page (one pin, one entry, their total).
+# Here: four sections of hanging bike spaces on the north side of the Peter Merian-Weg cycle path, numbered
+# eastwards from the west corner of the Peter Merian building, 3 m apart.
 racks:
-  - id: A
-    name: Main entrance shelter
-    capacity: 15
-    location: {lat: 47.5463, lng: 7.5950}
-    layout: {rows: 1, cols: 15, bearing: 35}
-  - id: B
-    name: Building 2, north side
-    capacity: 12
-    location: {lat: 47.5472, lng: 7.5969}
-    layout: {rows: 2, cols: 6, bearing: 120}
-# places: where people go (buildings, entrances), offered on the map as "Where are you going?". Placeholders
-# near the racks.
+  - id: A1
+    name: Peter Merian-Weg 1
+    group: Peter Merian-Weg
+    capacity: 10
+    location: {lat: 47.546174, lng: 7.593798}
+    layout: {rows: 1, cols: 10, bearing: 118, space_m: [0.5, 1.2]}
+  - id: A2
+    name: Peter Merian-Weg 2
+    group: Peter Merian-Weg
+    capacity: 19
+    location: {lat: 47.546131, lng: 7.593918}
+    layout: {rows: 1, cols: 19, bearing: 118, space_m: [0.5, 1.2]}
+  - id: A3
+    name: Peter Merian-Weg 3
+    group: Peter Merian-Weg
+    capacity: 19
+    location: {lat: 47.546078, lng: 7.594065}
+    layout: {rows: 1, cols: 19, bearing: 118, space_m: [0.5, 1.2]}
+  - id: A4
+    name: Peter Merian-Weg 4
+    group: Peter Merian-Weg
+    capacity: 19
+    location: {lat: 47.546026, lng: 7.594212}
+    layout: {rows: 1, cols: 19, bearing: 118, space_m: [0.5, 1.2]}
+# places: where people go (buildings, entrances), offered on the map as "Where are you going?".
 places:
-  - {name: Main entrance, location: {lat: 47.5461, lng: 7.5956}}
-  - {name: Building 2, location: {lat: 47.5475, lng: 7.5965}}
-  - {name: Canteen, location: {lat: 47.5468, lng: 7.5981}}
-  - {name: Visitor centre, location: {lat: 47.5455, lng: 7.5985}}
+  - {name: Memox entrance, location: {lat: 47.546396, lng: 7.594054}}
+  - {name: Peter Merian-Strasse 84, location: {lat: 47.546106, lng: 7.594596}}
+  - {name: Peter Merian-Strasse 88, location: {lat: 47.545848, lng: 7.595292}}
+  - {name: Faculty of Law (Peter Merian-Weg 8), location: {lat: 47.545313, lng: 7.597321}}
+  - {name: Economics library (Peter Merian-Weg 6), location: {lat: 47.545170, lng: 7.597735}}
+  - {name: Basel SBB station, location: {lat: 47.54741, lng: 7.58956}}

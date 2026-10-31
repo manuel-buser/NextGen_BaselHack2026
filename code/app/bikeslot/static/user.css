@@ -32,8 +32,8 @@
   --btn-bg-hover: #2a2a27;
   --btn-ink: #f9f9f7;
 
-  --map-land: #ededeb;
-  --map-filter: grayscale(1) contrast(0.92) brightness(1.03);
+  --map-land: #efede9;
+  --map-filter: saturate(0.65) contrast(0.93) brightness(1.03);
   --scrim: rgba(249, 249, 247, 0.92);
 
   --shadow-1: 0 1px 2px rgba(11, 11, 11, 0.04);
@@ -68,8 +68,8 @@
   --btn-bg-hover: #ffffff;
   --btn-ink: #0d0d0d;
 
-  --map-land: #181817;
-  --map-filter: grayscale(1) invert(1) brightness(0.82) contrast(0.9);
+  --map-land: #191915;
+  --map-filter: invert(1) hue-rotate(180deg) saturate(0.6) brightness(0.88) contrast(0.9);
   --scrim: rgba(13, 13, 13, 0.9);
 
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
@@ -101,8 +101,8 @@
     --btn-bg: #f0efec;
     --btn-bg-hover: #ffffff;
     --btn-ink: #0d0d0d;
-    --map-land: #181817;
-    --map-filter: grayscale(1) invert(1) brightness(0.82) contrast(0.9);
+    --map-land: #191915;
+    --map-filter: invert(1) hue-rotate(180deg) saturate(0.6) brightness(0.88) contrast(0.9);
     --scrim: rgba(13, 13, 13, 0.9);
     --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-2: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 28px -12px rgba(0, 0, 0, 0.7);
@@ -158,6 +158,8 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 button { font: inherit; color: inherit; }
+/* Classes that set display (.btn, .map-key) would otherwise beat the hidden attribute */
+[hidden] { display: none !important; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .num { font-variant-numeric: tabular-nums; }
 .sr-only {
@@ -293,6 +295,8 @@ button { font: inherit; color: inherit; }
 }
 .map .leaflet-container { width: 100%; height: 100%; background: var(--map-land); font: inherit; }
 .map .leaflet-tile-pane { filter: var(--map-filter); }
+/* Thin halo, so plans and the route line stay clear over coloured streets and parks */
+.map .leaflet-overlay-pane svg { filter: drop-shadow(0 0 1px var(--surface)) drop-shadow(0 0 1px var(--surface)); }
 
 /* Zero-size marker root on the point, so Leaflet owns its transform. */
 .pin-anchor { position: absolute; width: 0; height: 0; overflow: visible; }
@@ -359,10 +363,6 @@ button { font: inherit; color: inherit; }
   box-shadow: var(--shadow-1);
   color: var(--ink-3);
 }
-.pin--demo { outline: 1.5px dashed var(--ink-3); outline-offset: 2px; }
-.pin--demo.pin--full,
-.pin--demo.pin--none { outline: 0; border-style: dashed; border-width: 1.5px; padding: 5.5px 10.5px 0; }
-.pin--demo.pin--none { border-color: var(--ink-3); }
 .pin.is-selected { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* Name on hover or keyboard focus. The pin's aria-label already carries it. */
@@ -406,18 +406,14 @@ button { font: inherit; color: inherit; }
 }
 .map-key__i { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .map-key .pin {
-  height: 20px;
-  padding: 3px 8px 0;
+  width: 22px;
+  height: 14px;
+  padding: 0;
   box-shadow: none;
   cursor: default;
 }
-.map-key .pin .pin__n { font-size: 12px; }
-.map-key .pin--full,
-.map-key .pin--demo.pin--none { padding: 2.5px 7.5px 0; }
-.map-key .pin--demo { outline-offset: 1.5px; }
 
-/* Zoom buttons and attribution: styles both the mock and Leaflet's DOM */
-.map-ctrl,
+/* Zoom buttons and attribution: Leaflet's DOM */
 .map .leaflet-bar {
   position: absolute;
   right: 16px; bottom: 40px;
@@ -431,7 +427,6 @@ button { font: inherit; color: inherit; }
   box-shadow: var(--shadow-2);
 }
 .map .leaflet-bar { position: static; }
-.map-ctrl__btn,
 .map .leaflet-bar a {
   display: grid;
   place-items: center;
@@ -445,12 +440,9 @@ button { font: inherit; color: inherit; }
   cursor: pointer;
   transition: background-color var(--t-1) var(--ease-out);
 }
-.map-ctrl__btn:last-child,
 .map .leaflet-bar a:last-child { border-bottom: 0; }
-.map-ctrl__btn:hover,
 .map .leaflet-bar a:hover { background: var(--sunken); }
 
-.map-attrib,
 .map .leaflet-control-attribution {
   position: absolute;
   right: 0; bottom: 0;
@@ -465,7 +457,7 @@ button { font: inherit; color: inherit; }
 .map .leaflet-control-attribution { position: static; }
 .map .leaflet-control-attribution a { color: var(--ink-2); }
 
-/* Card that replaces a pin at zoom 19 and up */
+/* The selected rack's card, in place of its pin from zoom 18 */
 .mcard {
   position: absolute;
   left: 0;
@@ -492,27 +484,6 @@ button { font: inherit; color: inherit; }
   margin-left: -0.75px;
   background: var(--ink-3);
 }
-
-/* Card and ground plan share one zero-size marker on the rack's point. */
-.card-anchor { position: absolute; width: 0; height: 0; overflow: visible; }
-
-/* Rack plan on the ground, rotated to the rack bearing by JS. */
-.ground {
-  position: absolute;
-  left: 0; top: 0;
-  padding: 5px;
-  border: 1px dashed var(--ink-3);
-  border-radius: 3px;
-  background: var(--scrim);
-  transform: translate(-50%, -50%);
-  transform-origin: 50% 50%;
-}
-.ground .plan { padding: 0; border: 0; background: none; gap: 2px; }
-.ground .plan__aisle { height: auto; }
-.ground .plan__aisle::before { left: 2px; right: 2px; }
-.ground .plan__door { right: -6px; background: var(--scrim); }
-.ground .cell { height: auto; border-radius: 2px; font-size: 0; }
-.ground .cell--free { box-shadow: inset 0 0 0 1.5px var(--green); }
 
 
 /* 7. Summary -------------------------------------------------------------- */
@@ -604,7 +575,7 @@ button { font: inherit; color: inherit; }
   color: var(--ink);
   overflow-wrap: anywhere;
 }
-.tile__head > .chip:not(.chip--demo) { justify-self: end; margin-top: -1px; }
+.tile__head > .chip { justify-self: end; margin-top: -1px; }
 .tile__chev {
   display: grid;
   place-items: center;
@@ -708,8 +679,6 @@ button { font: inherit; color: inherit; }
 .chip--starting .chip__i { color: var(--ink-2); }
 .chip--stale .chip__i { color: var(--amber); }
 .chip--none .chip__i { color: var(--ink-3); }
-.chip--demo { border-style: dashed; border-color: var(--line-2); background: transparent; }
-.chip--demo .chip__i { color: var(--ink-3); }
 .chip__i .hands { stroke: #0b0b0b; }
 .chip--starting .chip__i .arc { transform-origin: 6px 6px; animation: spin 1.4s linear infinite; }
 
@@ -906,7 +875,6 @@ button { font: inherit; color: inherit; }
   .tile__head { min-height: 44px; padding: 14px 14px 14px 16px; }
   .tile__plan { margin: 0 16px; }
   .map-key { left: 12px; bottom: 28px; max-width: calc(100% - 24px); gap: 6px 12px; padding: 6px 10px; }
-  .map-ctrl { right: 12px; top: 12px; bottom: auto; }
 }
 
 
@@ -937,7 +905,20 @@ button { font: inherit; color: inherit; }
 .pin__cam { width: 12px; height: 12px; align-self: center; color: var(--accent); }
 .mcard .count { flex-wrap: wrap; }
 .mcard__src { margin-left: auto; }
-.mcard__none { margin: 0; font: 400 12px/16px var(--font-text); color: var(--ink-3); }
+/* A location: its racks as stacked rows in the panel and as segments on the map card */
+.parts { display: grid; gap: 10px; }
+.part { display: grid; grid-template-columns: minmax(0, 1fr) 40px; align-items: center; gap: 8px; }
+.part__n { display: inline-flex; align-items: center; justify-content: flex-end; gap: 4px; font: 700 20px/1 var(--font-display); font-variant-numeric: tabular-nums; color: var(--ink); }
+.part__n--unknown { color: var(--ink-3); }
+.part__cam { width: 12px; height: 12px; color: var(--accent); }
+.segs { display: flex; gap: 3px; }
+.seg {
+  flex: 1 1 0; min-width: 0; padding: 4px 0; border-radius: 3px; text-align: center;
+  font: 600 12px/14px var(--font-text); font-variant-numeric: tabular-nums;
+}
+.seg--free { background: var(--free-bg); box-shadow: inset 0 0 0 1.5px var(--green); color: var(--ink); }
+.seg--full { background: var(--taken-bg); box-shadow: inset 0 0 0 1px var(--red); color: var(--ink-2); }
+.seg--none { background: var(--sunken); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--ink-3); }
 
 .chip--real { border-color: var(--accent); background: var(--accent); color: #fff; }
 .chip--real .chip__i { color: #fff; }
@@ -954,17 +935,23 @@ button { font: inherit; color: inherit; }
 .plan-wrap--start .plan--sm .plan__door { left: -6px; }
 .plan-wrap--free { padding: 0; }
 .plan-free--quiet { color: var(--ink-3); }
-/* More than 10 spaces in a row: narrower cells, so smaller numbers (none in the map card) */
+/* More than 10 spaces in a row: narrower cells, so smaller numbers */
 .plan--dense { gap: 3px; }
 .plan--dense .cell { font-size: 11px; letter-spacing: -0.02em; }
 .plan--sm.plan--dense { gap: 2px; }
-.plan--sm.plan--dense .cell { font-size: 0; }
+/* Cells narrower than a number: fitLabels in app.js keeps the numbers that fit and moves them under their cells */
+.plan.is-sparse { padding-bottom: 26px; }
+.plan.is-sparse .plan__aisle { height: 24px; }
+.plan.is-sparse .cell > span { position: absolute; left: 50%; top: calc(100% + 5px); transform: translateX(-50%); font: 600 11px/14px var(--font-text); color: var(--ink-2); }
+.plan--sm.is-sparse { padding-bottom: 19px; }
+.plan--sm.is-sparse .plan__aisle { height: 18px; }
+.plan--sm.is-sparse .cell > span { top: calc(100% + 3px); font-size: 10px; line-height: 13px; }
 
 /* Plans at real size on the map: Leaflet polygons built by updatePlan in app.js */
 .plan-space, .plan-outline { fill-opacity: 1; stroke-opacity: 1; stroke-width: 1; }
 .plan-space-free, .plan-outline-ok { fill: var(--free-bg); stroke: var(--green); stroke-width: 1.5; }
-.plan-space-taken, .plan-outline-full { fill: url(#plan-hatch); stroke: var(--taken-edge); }
-.plan-outline-full { stroke: var(--red); stroke-width: 1.5; }
+.plan-space-taken, .plan-outline-full { fill: url(#plan-hatch); stroke: var(--red); }
+.plan-outline-full { stroke-width: 1.5; }
 .plan-space-unknown, .plan-outline-unknown { fill: var(--sunken); stroke: var(--ink-3); }
 .plan-outline-unknown { stroke-dasharray: 3 2; }
 .plan-hatch-fill { fill: var(--taken-bg); }
@@ -1005,7 +992,7 @@ button { font: inherit; color: inherit; }
 .dest-near:hover { border-color: var(--ink-3); color: var(--ink); }
 .dest-near .ico, .dest-open .ico, .dest-go .ico { width: 14px; height: 14px; }
 .dest-result { margin: 0; padding-top: 10px; border-top: 1px solid var(--line); font: 600 13px/18px var(--font-text); color: var(--ink); }
-.dest-note { margin: 0; font: 400 11px/15px var(--font-text); color: var(--ink-3); }
+.dest-hint { flex: 1 1 auto; }
 .dest-open {
   display: none; align-items: center; gap: 8px; padding: 0; border: 0; background: none;
   font: 500 13px/18px var(--font-text); color: var(--ink); cursor: pointer;
@@ -1014,7 +1001,9 @@ button { font: inherit; color: inherit; }
 @media (max-width: 639px) {
   .dest-open { display: inline-flex; }
   .dest-title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .dest:not(.open) { width: auto; max-width: calc(100vw - 112px); padding: 10px 12px; }
+  .dest:not(.open) { width: auto; max-width: calc(100vw - 112px); padding: 0; gap: 0; }
+  .dest:not(.open) .dest-open { min-height: 44px; padding: 0 12px; }
+  .dest:not(.open) .dest-result { margin: 0 12px 10px; }
   .dest:not(.open) .dest-body > :not(.dest-result),
   .dest:not(.open) .dest-body:has(> .dest-result[hidden]) { display: none; }
   .map .leaflet-top.leaflet-right .leaflet-control { margin: 12px 12px 0 0; }
@@ -1032,7 +1021,7 @@ button { font: inherit; color: inherit; }
 .dest-label { left: 0; transform: translate(-50%, -50%); }
 .you-dot { fill: var(--accent); fill-opacity: 1; stroke: var(--surface); stroke-width: 3; stroke-opacity: 1; }
 
-/* Summary when nothing is live, the demo note, the empty list */
+/* Summary when nothing is live, the empty list */
 .summary__n.is-quiet { color: var(--ink-3); }
 .tile__extra::before { content: "\00b7"; margin: 0 6px; }
 .list-empty { margin: 0; font: 400 14px/20px var(--font-text); color: var(--ink-3); }
@@ -1041,8 +1030,7 @@ button { font: inherit; color: inherit; }
 /* Predictions inside the open tile */
 .forecast { display: grid; gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); min-width: 0; }
 .forecast-title { margin: 0; font: 600 12px/14px var(--font-display); letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3); }
-.forecast-quiet, .forecast-note { margin: 0; font: 400 12px/16px var(--font-text); color: var(--ink-3); }
-.forecast-note { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.forecast-quiet { margin: 0; font: 400 12px/16px var(--font-text); color: var(--ink-3); }
 .forecast-lines { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; font: 400 14px/20px var(--font-text); color: var(--ink-2); }
 .forecast-lines li:first-child { color: var(--ink); font-weight: 600; }
 .chart { display: block; width: 100%; height: auto; overflow: visible; font-family: var(--font-text); }
@@ -1065,4 +1053,56 @@ button { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   .chart-today.draw { animation: none; stroke-dasharray: none; stroke-dashoffset: 0; }
   .dest-go:active, .dest-near:active { transform: none; }
+}
+
+
+/* Info button: text read once, shown on hover, keyboard focus or a tap (app.js) */
+.info { position: relative; display: inline-flex; }
+.info__btn {
+  display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0;
+  border-radius: var(--r-pill); background: none; color: var(--ink-3); cursor: pointer;
+  transition: background-color var(--t-1) var(--ease-out), color var(--t-1) var(--ease-out);
+}
+.info__btn:hover, .info.is-open .info__btn { background: var(--sunken); color: var(--ink); }
+.info__btn .ico { width: 16px; height: 16px; }
+.info__pop {
+  display: none; position: absolute; right: 0; top: calc(100% + 6px); z-index: 10; width: max-content; max-width: 240px;
+  padding: 8px 10px; border: 1px solid var(--line-2); border-radius: var(--r-md); background: var(--surface);
+  box-shadow: var(--shadow-2); font: 400 12px/16px var(--font-text); color: var(--ink-2); text-align: left;
+}
+.info--up .info__pop { top: auto; bottom: calc(100% + 6px); left: 0; right: auto; }
+.info:hover > .info__pop, .info__btn:focus-visible + .info__pop, .info.is-open > .info__pop { display: block; }
+.info.is-shut > .info__pop { display: none; }
+
+
+/* 17. Theme toggle --------------------------------------------------------------- */
+/* The icon shows what a click gives: the moon while light, the sun while dark. */
+
+.hdr__tools { display: flex; align-items: center; gap: var(--s-1); flex: none; }
+.hdr__theme {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background-color var(--t-1) var(--ease-out), color var(--t-1) var(--ease-out);
+}
+.hdr__theme:hover { background: var(--sunken); color: var(--ink); }
+.hdr__theme .ico { width: 18px; height: 18px; }
+.hdr__theme .sun, [data-theme="dark"] .hdr__theme .moon { display: none; }
+[data-theme="dark"] .hdr__theme .sun { display: block; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .hdr__theme .moon { display: none; }
+  :root:not([data-theme="light"]) .hdr__theme .sun { display: block; }
+}
+
+@media (max-width: 560px) {
+  .hdr__tools { order: 2; }
+  .hdr__theme { width: 44px; height: 44px; }
 }

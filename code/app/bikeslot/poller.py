@@ -24,8 +24,7 @@ def describe(exc: Exception) -> str:
 
 
 class CameraPoller:
-    """Every poll_s: GET the status, a good reply counts as alive. Every picture_every_s: GET a picture and feed
-    it through the same path as a posted one. Failures are recorded on the camera and the next round tries again."""
+    """Status every poll_s, a picture every picture_every_s; failures are recorded and retried next round."""
 
     def __init__(self, app: FastAPI, rack: Rack) -> None:
         self.app = app
