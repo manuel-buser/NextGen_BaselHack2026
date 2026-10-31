@@ -1,15 +1,23 @@
 import asyncio
 import json
 import logging
+import socket
+import subprocess
+import sys
+import threading
 import time
 from datetime import date, datetime, timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 
+from bikeslot import routes_admin, routes_camera, routes_public
 from bikeslot.config import Settings
 from bikeslot.geocoder import USER_AGENT, Geocoder, HideQueries
+from bikeslot.history import MINUTE, History
 from bikeslot.main import create_app
 from bikeslot.poller import CameraPoller
 from bikeslot.state import PullCamera
@@ -119,12 +127,24 @@ def test_demo_rack_is_labelled_and_decided_by_the_stand_in(tmp_path):
         assert [(c["rack"], c["demo"], c["node_id"]) for c in status["cameras"]] == [("A", False, None), ("C", True, "demo-C")]
 
 
-@pytest.mark.parametrize("path, demo_ids", [("racks.yaml", []), ("racks.demo.yaml", ["B", "C"])])
-def test_shipped_racks_files_load(path, demo_ids):
+@pytest.mark.parametrize("path, ids", [("racks.yaml", ["Peter Merian-Weg"]), ("racks.demo.yaml", ["Peter Merian-Weg", "B", "C"])])
+def test_shipped_racks_files_load(path, ids):
     with TestClient(create_app(Settings(racks_file=path, camera_pull=False))) as client:  # never contact a real node
         racks = client.get("/api/racks").json()["racks"]
-    assert [r["id"] for r in racks if r["demo"]] == demo_ids
-    assert racks[0]["id"] == "A" and all(r["location"] for r in racks)
+    assert [r["id"] for r in racks] == ids and all(r["location"] for r in racks)
+    row = racks[0]  # the four sections are one location, and the one with the real camera is not demo
+    assert row["capacity"] == 67 and [(p["id"], p["capacity"]) for p in row["parts"]] == [("A1", 10), ("A2", 19), ("A3", 19), ("A4", 19)]
+    assert not row["demo"] and [p["demo"] for p in row["parts"]] == ([False] * 4 if path == "racks.yaml" else [True, False, True, True])
+
+
+def test_demo_file_has_the_four_sections_and_the_camera_on_section_2():
+    with open("racks.demo.yaml", encoding="utf-8") as handle:
+        racks = yaml.safe_load(handle)["racks"]  # raw, since the app keeps only the last rack of a repeated id
+    ids = [r["id"] for r in racks]
+    assert len(ids) == len(set(ids))
+    sections = [r for r in racks if r.get("group") == "Peter Merian-Weg"]
+    assert [r["id"] for r in sections] == ["A1", "A2", "A3", "A4"] and sum(r["capacity"] for r in sections) == 67
+    assert [r["id"] for r in racks if "camera" in r] == ["A2"] == [r["id"] for r in sections if not r.get("demo")]
 
 
 def layout_app(tmp_path, layout: str, capacity: int = 6):
@@ -275,7 +295,7 @@ def test_push_alive_uses_the_same_field_mapping(client):
     assert (camera["temp_c"], camera["too_hot"], camera["node"]["wifi_rssi_dbm"], camera["node"]["uptime_s"]) == (51.3, False, -38, 155)
 
 
-# History and prediction: only free counts per rack over time. A demo rack runs on the driver's clock (X-Demo-Clock).
+# History and prediction: only free counts per rack over time, every rack stamped with the app's own clock.
 HISTORY_RACKS = f"racks:\n  - {{id: A, name: Real rack, capacity: {CAPACITY}}}\n  - {{id: C, name: Demo rack, capacity: {CAPACITY}, demo: true}}\n"
 # A morning that fills up: 4 free until 07:45, 1 free at 08:00, full from 08:15 (spaces taken per time).
 MORNING = [("07:00", 0), ("07:30", 0), ("07:45", 0), ("08:00", 3), ("08:15", 4), ("08:30", 4), ("09:00", 4)]
@@ -287,9 +307,30 @@ def history_app(tmp_path, history_file=None):
     return create_app(Settings(racks_file=str(path), detector_url="fake", free_after_clean=1, history_file=history_file))
 
 
-def demo_picture(client: TestClient, taken: int, clock: str, rack: str = "C"):
+class RouteClock:
+    """Stands in for `time` in the routes: the real time, or the one a test set to send pictures at chosen times."""
+
+    def __init__(self) -> None:
+        self.now: float | None = None
+
+    def time(self) -> float:
+        return time.time() if self.now is None else self.now
+
+
+ROUTE_CLOCK = RouteClock()
+
+
+@pytest.fixture(autouse=True)
+def route_clock(monkeypatch):
+    ROUTE_CLOCK.now = None
+    for module in (routes_admin, routes_camera, routes_public):
+        monkeypatch.setattr(module, "time", ROUTE_CLOCK)
+
+
+def demo_picture(client: TestClient, taken: int, when: str, rack: str = "C"):
+    ROUTE_CLOCK.now = datetime.fromisoformat(when).timestamp()  # also "now" for the requests that follow
     body = b"DEMO:" + ("1" * taken + "0" * (CAPACITY - taken)).encode()
-    return client.post(f"/api/camera/{rack}/picture", content=body, headers={"X-Demo-Clock": clock})
+    return client.post(f"/api/camera/{rack}/picture", content=body)
 
 
 def play_mornings(client: TestClient, days: list[str]) -> None:
@@ -304,7 +345,7 @@ def test_full_from_0815_on_three_weekdays_is_learned(tmp_path):
         history = client.get("/api/racks/C/history").json()
         demo_picture(client, 4, "2026-11-07T08:15")  # a Saturday: weekend days are learned apart
         weekend = client.get("/api/racks/C/history").json()
-    assert (history["clock"], history["now"], history["day_type"], history["free_now"]) == ("demo", "09:00", "weekday", 0)
+    assert (history["now"], history["day_type"], history["free_now"]) == ("09:00", "weekday", 0)
     assert history["insights"] == {"usually_full_by": "08:15", "best_before": "07:45", "usual_free_now": 0.0, "days": 3, "learning": False}
     assert (weekend["day_type"], weekend["insights"]["days"], weekend["insights"]["usually_full_by"]) == ("weekend", 1, None)
 
@@ -329,19 +370,17 @@ def test_at_most_one_sample_per_rack_per_minute(tmp_path):
     assert typical[30] == {"t": "07:30", "free": 2.5, "full_share": 0.0, "n": 2}
 
 
-def test_demo_clock_is_used_for_a_demo_rack_and_ignored_for_a_real_one(tmp_path):
+def test_demo_and_real_racks_are_stamped_with_the_real_clock(tmp_path):
+    before = datetime.now().replace(second=0, microsecond=0)
     with TestClient(history_app(tmp_path)) as client:
-        demo_picture(client, 1, "2026-11-02T07:35")
-        demo = client.get("/api/racks/C/history").json()
-        client.post("/api/camera/A/picture", content=b"x" * (10 * (CAPACITY + 1) + 1), headers={"X-Demo-Clock": "2026-11-02T07:35"})
-        real = client.get("/api/racks/A/history").json()
-        recorded = list(client.app.state.store.history.samples["A"])
-        demo_picture(client, 1, "not a time")  # a malformed clock counts as none: back to the real clock
-        assert client.get("/api/racks/C/history").json()["clock"] == "real"
-    assert list(client.app.state.store.history.samples["C"])[0] == "2026-11-02T07:35"
-    assert (demo["clock"], demo["now"], demo["day_type"], demo["free_now"]) == ("demo", "07:35", "weekday", 3)
-    assert (real["clock"], real["free_now"], len(recorded)) == ("real", 3, 1)
-    assert abs(datetime.strptime(recorded[0], "%Y-%m-%dT%H:%M") - datetime.now()) < timedelta(minutes=2)
+        client.post("/api/camera/C/picture", content=b"DEMO:1000", headers={"X-Demo-Clock": "2026-11-02T07:35"})  # header ignored
+        client.post("/api/camera/A/picture", content=b"x" * (10 * (CAPACITY + 1) + 1))
+        views = {rack: client.get(f"/api/racks/{rack}/history").json() for rack in ("A", "C")}
+        samples = client.app.state.store.history.samples
+    for rack in ("A", "C"):
+        (minute,) = samples[rack]
+        assert before <= datetime.strptime(minute, MINUTE) <= datetime.now()
+        assert (views[rack]["free_now"], len(views[rack]["today"])) == (3, 1)
 
 
 def test_history_shape_and_unknown_rack(tmp_path):
@@ -350,8 +389,8 @@ def test_history_shape_and_unknown_rack(tmp_path):
         empty = client.get("/api/racks/C/history").json()
         play_mornings(client, ["2026-11-02"])
         history = client.get("/api/racks/C/history").json()
-    assert set(history) == {"rack", "clock", "now", "day_type", "free_now", "capacity", "today", "typical", "insights"}
-    assert (empty["clock"], empty["free_now"], empty["today"], empty["insights"]["days"]) == ("real", None, [], 0)
+    assert set(history) == {"rack", "now", "day_type", "free_now", "capacity", "today", "typical", "insights"}
+    assert (empty["free_now"], empty["today"], empty["insights"]["days"]) == (None, [], 0)
     assert (history["rack"], history["capacity"], len(history["typical"])) == ("C", CAPACITY, 96)
     assert history["typical"][0] == {"t": "00:00", "free": None, "full_share": 0.0, "n": 0}
     assert history["typical"][33] == {"t": "08:15", "free": 0.0, "full_share": 1.0, "n": 1}
@@ -396,6 +435,61 @@ def test_history_survives_a_restart_and_a_bad_file_starts_empty(tmp_path, caplog
             assert client.app.state.store.history.samples == {}
             assert client.get("/api/racks/C/history").json()["insights"]["days"] == 0
     assert "starting empty" in caplog.text
+
+
+def seed(history_file, app: str) -> subprocess.CompletedProcess:
+    command = [sys.executable, "tools/demo_data.py", "--seed", "--app", app, "--history", str(history_file)]
+    return subprocess.run(command, capture_output=True, text=True, timeout=120)
+
+
+def closed_port() -> str:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return f"http://127.0.0.1:{probe.getsockname()[1]}"  # nothing listens there once the socket is closed
+
+
+def test_seeding_writes_a_week_for_every_fed_rack_including_the_real_section(tmp_path):
+    file = tmp_path / "data" / "history.json"
+    result = seed(file, closed_port())
+    assert result.returncode == 0, result.stderr
+    history = History(str(file))
+    history.load()
+    history.groups = {"Peter Merian-Weg": ["A1", "A2", "A3", "A4"]}
+    assert sorted(history.samples) == ["A1", "A2", "A3", "A4", "B"]  # C stays without data, the real A2 is seeded too
+    minutes = sorted(history.samples["A2"])
+    assert len(minutes) == 7 * 24 * 60 + 1 and abs(datetime.strptime(minutes[-1], MINUTE) - datetime.now()) < timedelta(minutes=2)
+    row = history.samples_of("Peter Merian-Weg")
+    assert len(row) == len(minutes) and {capacity for _free, capacity in row.values()} == {67}  # all four sections, every minute
+    (weekday, weekdays), (weekend, weekends) = history.profile("Peter Merian-Weg", "weekday"), history.profile("Peter Merian-Weg", "weekend")
+    assert weekdays + weekends == 8 and weekends in (2, 3)  # seven days back start on an eighth date
+    noon = 12 * 60 // 15  # the 15-minute slot from 12:00
+    assert weekday[noon]["free"] < weekend[noon]["free"] < 67  # weekends quieter, but not empty
+    west, east = history.profile("A1", "weekday")[0][noon]["free"] / 10, history.profile("A4", "weekday")[0][noon]["free"] / 19
+    assert west < east  # the venue end fills first
+
+
+class Health(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, *args) -> None:
+        pass
+
+
+def test_seeding_refuses_while_an_app_answers_and_over_an_old_file(tmp_path):
+    file = tmp_path / "history.json"
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Health)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        result = seed(file, f"http://127.0.0.1:{server.server_port}")
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert result.returncode != 0 and "an app answers" in result.stderr and not file.exists()
+    file.write_text("{}", encoding="utf-8")
+    result = seed(file, closed_port())
+    assert result.returncode != 0 and "exists" in result.stderr and file.read_text(encoding="utf-8") == "{}"
 
 
 def test_layout_space_size_defaults_and_custom_values(tmp_path):
@@ -543,3 +637,111 @@ def test_typed_places_stay_out_of_the_logs():
     record = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d', ("127.0.0.1:5", "GET", "/api/geocode?q=Basel%20SBB", "1.1", 200), None)
     HideQueries(("/api/geocode",)).filter(record)
     assert "Basel" not in record.getMessage() and "/api/geocode?(hidden)" in record.getMessage()
+
+
+GROUPED_RACKS = """racks:
+  - {id: P1, name: Row 1, group: Row, capacity: 4, demo: true, location: {lat: 47.5, lng: 7.5}, layout: {rows: 1, cols: 4, bearing: 90}}
+  - {id: P2, name: Row 2, group: Row, capacity: 4, demo: true, location: {lat: 47.5, lng: 7.502}}
+  - {id: Q, name: Alone, capacity: 4, demo: true}
+"""
+
+
+def grouped_app(tmp_path, racks: str = GROUPED_RACKS):
+    path = tmp_path / "racks.yaml"
+    path.write_text(racks, encoding="utf-8")
+    return create_app(Settings(racks_file=str(path), detector_url="fake", free_after_clean=1, camera_pull=False))
+
+
+def test_racks_of_one_group_are_one_location_with_their_total(tmp_path):
+    with TestClient(grouped_app(tmp_path)) as client:
+        assert demo_picture(client, 1, "2026-11-02T08:00", "P1").json()["status"] == "ok"
+        entries = client.get("/api/racks").json()["racks"]
+        assert [entry["id"] for entry in entries] == ["Row", "Q"]
+        row = entries[0]
+        # P2 has no live data yet, so it adds no free spaces (unknown is never free)
+        assert (row["name"], row["capacity"], row["free"], row["status"], row["demo"]) == ("Row", 8, 3, "ok", True)
+        assert [part["id"] for part in row["parts"]] == ["P1", "P2"] and row["parts"][1]["status"] == "unknown"
+        assert row["parts"][0]["layout"]["width"] == 4 and "forecast" not in row["parts"][0] and "forecast" in row
+        assert row["location"] == {"lat": 47.5, "lng": pytest.approx(7.501)}
+        assert demo_picture(client, 3, "2026-11-02T08:00", "P2").json()["status"] == "ok"
+        assert client.get("/api/racks/Row").json()["free"] == 4
+        status = client.get("/api/admin/status").json()  # the admin page keeps one camera and one rack per section
+        assert [camera["rack"] for camera in status["cameras"]] == ["P1", "P2", "Q"]
+        assert [rack["id"] for rack in status["racks"]] == ["P1", "P2", "Q"]
+
+
+def test_a_location_without_any_live_part_has_no_count(tmp_path):
+    with TestClient(grouped_app(tmp_path)) as client:
+        row = client.get("/api/racks").json()["racks"][0]
+        assert (row["free"], row["status"], row["age_s"]) == (None, "unknown", None)
+
+
+def test_a_group_name_must_not_be_a_rack_id(tmp_path):
+    with pytest.raises(ValueError, match="also a rack id"):
+        grouped_app(tmp_path, GROUPED_RACKS.replace("group: Row", "group: Q"))
+
+
+def test_the_location_forecast_adds_its_parts_per_minute(tmp_path):
+    with TestClient(grouped_app(tmp_path)) as client:
+        for day in ("2026-11-02", "2026-11-03", "2026-11-04"):
+            for hhmm, p1, p2 in (("07:00", 0, 1), ("08:15", 4, 2), ("08:30", 4, 4)):
+                demo_picture(client, p1, f"{day}T{hhmm}", "P1")
+                demo_picture(client, p2, f"{day}T{hhmm}", "P2")
+        demo_picture(client, 1, "2026-11-05T07:00", "P1")
+        demo_picture(client, 0, "2026-11-05T07:00", "P2")
+        view = client.get("/api/racks/Row/history").json()
+        typical = {point["t"]: point["free"] for point in view["typical"]}
+        assert (view["rack"], view["capacity"], view["now"]) == ("Row", 8, "07:00")
+        assert (typical["07:00"], typical["08:15"], typical["08:30"]) == (7.0, 2.0, 0.0)  # 4 + 3, 0 + 2, 0 + 0
+        assert view["today"] == [{"t": "07:00", "free": 7.0}] and view["free_now"] == 7
+        assert view["insights"]["usually_full_by"] == "08:30" and not view["insights"]["learning"]
+        assert client.get("/api/racks").json()["racks"][0]["forecast"]["usually_full_by"] == "08:30"
+        own = {point["t"]: point["free"] for point in client.get("/api/racks/P1/history").json()["typical"]}
+        assert (own["07:00"], own["08:15"]) == (3.8, 0.0)  # each part keeps its own history: (4 + 4 + 4 + 3) / 4 at 07:00
+
+
+class ArrivalRack:
+    id, capacity = "R", 10
+
+
+def arrival_at(history: History, when: str, free_now: int | None, minutes: int) -> dict:
+    return history.arrival(ArrivalRack(), datetime.fromisoformat(when).timestamp(), free_now, minutes)
+
+
+def test_free_on_arrival_is_the_usual_count_then_plus_a_fading_difference_from_now():
+    history = History()
+    for day, frees in (("2026-11-02", (5, 1, 9)), ("2026-11-03", (7, 3, 9))):  # usually 6 at 08:00, 2 at 09:00, 9 at 10:00
+        for hhmm, free in zip(("08:00", "09:00", "10:00"), frees):
+            history.record("R", datetime.fromisoformat(f"{day}T{hhmm}"), free, 10)
+    wednesday = "2026-11-04T08:00"
+    assert arrival_at(history, wednesday, 8, 60) == {"minutes": 60, "at": "09:00", "free": 3}  # 2 + (8 - 6) / 2
+    assert arrival_at(history, wednesday, 8, 0)["free"] == 8
+    assert arrival_at(history, wednesday, 0, 60)["free"] == 0  # 2 - 3, never below 0
+    assert arrival_at(history, "2026-11-04T09:00", 10, 60)["free"] == 10  # 9 + 4, never above the capacity
+    assert arrival_at(history, wednesday, 8, 30)["free"] == 8  # no usual count at 08:30: the count now
+    assert arrival_at(history, "2026-11-04T07:00", 4, 60)["free"] == 4  # no usual count now: the count now
+    assert arrival_at(history, wednesday, None, 60) == {"minutes": 60, "at": "09:00", "free": None}
+
+
+def test_free_on_arrival_after_midnight_uses_the_arrival_days_type():
+    history = History()
+    history.record("R", datetime(2026, 11, 2, 23, 50), 4, 10)  # a Monday night
+    history.record("R", datetime(2026, 11, 3, 0, 5), 1, 10)  # a weekday just after midnight
+    history.record("R", datetime(2026, 10, 31, 0, 5), 9, 10)  # a Saturday just after midnight
+    assert arrival_at(history, "2026-11-06T23:50", 4, 15) == {"minutes": 15, "at": "00:05", "free": 9}  # Friday to Saturday
+
+
+def test_the_history_takes_minutes_ahead_for_a_location(tmp_path):
+    with TestClient(grouped_app(tmp_path)) as client:
+        for day in ("2026-11-02", "2026-11-03", "2026-11-04"):
+            for hhmm, p1, p2 in (("07:00", 0, 1), ("08:15", 4, 2)):
+                demo_picture(client, p1, f"{day}T{hhmm}", "P1")
+                demo_picture(client, p2, f"{day}T{hhmm}", "P2")
+        demo_picture(client, 1, "2026-11-05T07:00", "P1")
+        demo_picture(client, 0, "2026-11-05T07:00", "P2")
+        view = client.get("/api/racks/Row/history?minutes=75").json()
+        assert (view["capacity"], view["free_now"]) == (8, 7)
+        assert view["arrival"] == {"minutes": 75, "at": "08:15", "free": 2}  # the summed usual count, as today is usual
+        assert "arrival" not in client.get("/api/racks/Row/history").json()
+        assert client.get("/api/racks/Q/history?minutes=10").json()["arrival"]["free"] is None  # no live count
+        assert {client.get(f"/api/racks/Row/history?minutes={m}").status_code for m in (-1, 24 * 60 + 1, "soon")} == {422}

@@ -1,5 +1,5 @@
 // Page served by the camera at GET /: camera settings (like Espressif's CameraWebServer) on the
-// left, the processed live picture on the right. Talks to /status, /control and /capture.
+// left, the processed live picture on the right. Talks to /status, /control and /snapshot.
 #pragma once
 
 static const char LIVE_PAGE[] = R"HTML(<!doctype html>
@@ -89,7 +89,7 @@ function load(){fetch('/status').then(r=>r.json()).then(s=>{
 load();
 const v=document.getElementById('v'),info=document.getElementById('info');let paused=false;
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!paused)next();});
-async function next(){if(paused||document.hidden)return;try{const r=await fetch('/capture?t='+Date.now());
+async function next(){if(paused||document.hidden)return;try{const r=await fetch('/snapshot?t='+Date.now());
  if(!r.ok)throw 0;const b=await r.blob();URL.revokeObjectURL(v.src);v.src=URL.createObjectURL(b);
  info.textContent='updated '+new Date().toLocaleTimeString()+'  |  people blurred: '+r.headers.get('X-People-Blurred')+
  '  |  plate areas blurred: '+r.headers.get('X-Plates-Blurred')+'  |  processing '+r.headers.get('X-Detect-Ms')+' ms'+

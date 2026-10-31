@@ -6,7 +6,6 @@ const ICONS = {
   tri: '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M5 0l5 10H0z"/></svg>',
   ring: '<svg viewBox="0 0 10 10" aria-hidden="true"><circle cx="5" cy="5" r="4"/></svg>',
   square: '<svg viewBox="0 0 10 10" aria-hidden="true"><rect width="10" height="10" rx="1"/></svg>',
-  dashed: '<svg viewBox="0 0 10 10" aria-hidden="true"><rect x="1" y="1" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2 1.5"/></svg>',
   camera: '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 3h2l1-1.5h2L7 3h2v5.5H1z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><circle cx="5" cy="5.6" r="1.6" stroke="currentColor" stroke-width="1.2"/></svg>',
 };
 
@@ -32,12 +31,11 @@ function cameraChip(c) {
   return chip("critical", "square", "Offline");
 }
 
-/* Next to demo racks, the real ones get a chip too, so the real camera stands out */
+/* Among demo racks the real ones get a chip, so the real camera stands out */
 const anyDemo = (status) => status.racks.some((k) => k.demo) || status.cameras.some((c) => c.demo);
 
-function demoChip(item, status) {
-  if (item.demo) return ` ${chip("demo", "dashed", "Demo")}`;
-  return anyDemo(status) ? ` ${chip("real", "camera", "Real camera")}` : "";
+function realChip(item, status) {
+  return !item.demo && anyDemo(status) ? ` ${chip("real", "camera", "Real camera")}` : "";
 }
 
 /* What the node reports about itself (pull mode, or a pushed alive message with the same keys) */
@@ -45,17 +43,6 @@ const LOW_BLOCK_BYTES = 100 * 1024;
 const REBOOT_SHOWN_S = 600;
 
 const signal = (dbm) => (dbm >= -60 ? "excellent" : dbm >= -75 ? "ok" : "weak");
-
-function wifi(node) {
-  if (node.wifi_rssi_dbm === null) return "n/a";
-  return `${node.wifi_rssi_dbm} dBm, ${signal(node.wifi_rssi_dbm)}`;
-}
-
-function memory(node) {
-  if (node.heap_largest_block === null) return "n/a";
-  const block = `${Math.round(node.heap_largest_block / 1024)} KB`;
-  return node.heap_largest_block < LOW_BLOCK_BYTES ? `${block} ${chip("warning", "tri", "Low")}` : block;
-}
 
 function rackChip(k) {
   if (k.status === "ok") return chip("good", "dot", "Live");
@@ -81,7 +68,6 @@ const PULL_HEALTH_S = 5;
 const PULL_PICTURE_S = 10;
 const HOT_LIMIT_C = 75;
 const DETECTOR_TIMEOUT_S = 15;
-const DEMO_EVERY_S = 5;
 const VISION_POLL_S = 3; // VISION_POLL_S of the app, the status does not report it
 
 /* Lanes inside each step, parts in the order they happen: [id, label], a third item true marks a planned part.
@@ -138,7 +124,6 @@ function short(text, max = 24) {
 function flowNodes(status) {
   const cams = status.cameras;
   const real = cams.filter((c) => !c.demo);
-  const demo = cams.filter((c) => c.demo).length;
   const online = cams.filter((c) => c.online).length;
   const hot = cams.filter((c) => c.too_hot).length;
   const seen = cams.filter((c) => c.last_alive_at !== null).length;
@@ -210,7 +195,7 @@ function flowNodes(status) {
               : ["picture, health", ["", ""], ["", "picture, health", ""]],
       fake
         ? ["picture", ["to the built-in", "stand-in"], ["", "picture in memory,", "to the stand-in"]]
-        : ["picture", ["real racks only,", "held in memory"], ["", "real racks only,", "held in memory"]],
+        : ["picture", ["held in memory", ""], ["", "picture held", "in memory"]],
       ["answer per space", ["taken, free, unsure", "with a confidence"], ["", "taken, free or", "unsure per space"]],
       ["free per rack", ["user page asks 5 s", "admin page 3 s"], ["free per rack", "user page 5 s,", "admin page 3 s"]],
     ],
@@ -219,17 +204,8 @@ function flowNodes(status) {
       label: camera[1],
       sub: { pull: "ESP32-S3, app asks", push: "ESP32-S3, it posts", vision: "via vision service", mixed: "pull and push" }[mode] ?? "ESP32-S3 board",
       title: "Camera node (ESP32-S3)",
-      text: `${howCamera[mode] ?? "No real camera has been heard from yet."} The heat guard runs on the board: above the hot limit it stops taking pictures. When the node sends no too-hot flag, the app works it out from the temperature (${HOT_LIMIT_C} C).${demo ? ` Demo racks have no camera: the demo driver posts a made-up picture and an alive message every ${DEMO_EVERY_S} s (push).` : ""}`,
-      live: [
-        ["Cameras online", `${online} of ${cams.length}${demo ? ` (${demo} demo)` : ""}`],
-        ["Real camera", real.map((c) => `${esc(c.rack)}, ${esc(status.racks.find((k) => k.id === c.rack)?.name ?? "")}: ${c.source ?? "not heard from yet"}`).join("; ") || "none"],
-        ...(demo ? [["Demo racks", `${cams.filter((c) => c.demo).map((c) => esc(c.rack)).join(", ")}: fed by the demo driver`]] : []),
-        ["Too hot", hot ? `${hot}` : "none"],
-        ["Last picture", lastPicture === null ? "never" : ago(lastPicture)],
-        ["Chip temperatures", cams.filter((c) => c.temp_c !== null).map((c) => `${esc(c.rack)}: ${c.temp_c} C`).join(", ") || "n/a"],
-        ["WiFi signal", cams.filter((c) => c.node.wifi_rssi_dbm !== null).map((c) => `${esc(c.rack)}: ${wifi(c.node)}`).join(", ") || "n/a"],
-        ["Largest free memory block", cams.filter((c) => c.node.heap_largest_block !== null).map((c) => `${esc(c.rack)}: ${memory(c.node)}`).join(", ") || "n/a"],
-      ],
+      text: `${howCamera[mode] ?? "No real camera has been heard from yet."} The heat guard runs on the board: above the hot limit it stops taking pictures. When the node sends no too-hot flag, the app works it out from the temperature (${HOT_LIMIT_C} C).`,
+      live: [], // the camera cards above show all of it
       labels: {
         capture: mode === "pull" ? "take picture if health ok" : "take picture",
         send: { pull: "app fetches it", push: "node posts it", vision: "vision service decides" }[mode] ?? "picture out",
@@ -237,7 +213,6 @@ function flowNodes(status) {
       },
       notes: {
         mode: real.length ? `real camera, ${realWords[mode] ?? "not heard from yet"}` : "no real camera",
-        foot: demo ? `demo racks: no camera, the demo driver posts made-up pictures every ${DEMO_EVERY_S} s` : "",
       },
       parts: {
         heat: [hot ? "warning" : temps.length ? "good" : "muted", hot ? `${hot} too hot: no pictures` : temps.length ? `hottest ${Math.round(Math.max(...temps))} C, none too hot` : "no reading"],
@@ -265,7 +240,7 @@ function flowNodes(status) {
       parts: {
         endpoint: [receiving ? "good" : pictures ? "warning" : "muted", `${pictures} received`],
         memory: [pictures ? "good" : "muted", lastKb ? `last ${lastKb}, never stored` : "nothing yet"],
-        forward: fake ? ["good", "built-in stand-in"] : [d.reachable ? "good" : "critical", `${d.reachable ? "service reachable" : "service down"}${demo ? ", demo: stand-in" : ""}`],
+        forward: fake ? ["good", "built-in stand-in"] : [d.reachable ? "good" : "critical", d.reachable ? "service reachable" : "service down"],
         alive: [lastAlive !== null && lastAlive <= stale ? "good" : seen ? "critical" : "muted", lastAlive === null ? "none yet" : `last ${ago(lastAlive)}`],
         fields: [reporting ? "good" : "muted", `${reporting} of ${cams.length} with readings`],
         hot: [hot ? "warning" : temps.length ? "good" : "muted", `${HOT_LIMIT_C} C limit, ${hot} hot`],
@@ -289,7 +264,7 @@ function flowNodes(status) {
       ],
       notes: {
         mode: fake ? "built-in stand-in, no recognition" : `model: ${short(healthModel, 28)}`,
-        foot: fake ? "every rack, demo or real, gets the stand-in" : "demo racks: the stand-in, never sent here",
+        foot: fake ? "every rack gets the stand-in" : "",
         status: `last error: ${r.last_error ? short(r.last_error, 18) : "none"}`,
       },
       parts: {
@@ -435,7 +410,10 @@ function renderFlow(status) {
     setLines(document.querySelector(`#flow .edge-small[data-edge="${i}"]`), small, [71.5, 76, 85.5]); // short lines: the margin beside a zoomed step is narrow
   });
   const info = nodes[selectedNode];
-  el("flow-detail").innerHTML = kv([["Step", `<strong>${esc(info.title)}</strong>`], ["What happens", esc(info.text)], ...info.live]);
+  const detail = el("flow-detail"); // patched, not rebuilt, so an opened "What happens" stays open
+  field(detail, "title", esc(info.title));
+  field(detail, "how", esc(info.text));
+  field(detail, "live", kv(info.live));
 
   const pictures = status.cameras.reduce((sum, c) => sum + c.pictures, 0);
   if (lastPictureTotal !== null && pictures > lastPictureTotal) launchPacket();
@@ -727,7 +705,6 @@ applyView();
 /* Dashboard below the diagram: cards are built once per id and then patched, so bars and gauges ease and hover text survives the refresh */
 const GAUGE_C = [20, 90];
 const BLOCK_SCALE_BYTES = 200 * 1024;
-const UPTIME_WINDOW_S = 3600;
 const TREND_S = 600;
 const ACTIVITY_S = 300;
 const trends = { cameras: [], racks: [], free: [], latency: [] };
@@ -741,7 +718,6 @@ let lastOkAt = null;
 const MORE_ICONS = {
   push: '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M5 9V1.5M2 4.5l3-3 3 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   pull: '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M5 1v7.5M2 5.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  reboot: '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M8.6 5.4A3.6 3.6 0 1 1 5 1.4h1.4M5.2 0l1.6 1.4L5.2 2.8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   vision: '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 5c1.2-2.2 2.5-3.2 4-3.2S7.8 2.8 9 5c-1.2 2.2-2.5 3.2-4 3.2S2.2 7.2 1 5z" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="5" cy="5" r="1.4" fill="currentColor"/></svg>',
 };
 const PREVIEW_EVERY_S = 3;
@@ -902,7 +878,7 @@ function notePoll(status) {
 function renderKpis(status) {
   const box = el("kpis");
   if (!box.dataset.built) {
-    box.innerHTML = ["server", "detector", "cameras", "racks", "free"].map((key) => `<div class="stat" data-key="${key}">
+    box.innerHTML = ["server", "cameras", "racks", "free"].map((key) => `<div class="stat" data-key="${key}">
       <p class="label" data-f="label"></p><p class="stat-value"><span data-f="n"></span><span class="of" data-f="of"></span></p>
       <p class="sub" data-f="sub"></p><div class="stat-trend" data-f="trend"></div></div>`).join("");
     box.dataset.built = "1";
@@ -910,9 +886,7 @@ function renderKpis(status) {
   const tile = (key) => box.querySelector(`[data-key="${key}"]`);
   const now = status.generated_at;
   const cams = status.cameras;
-  const d = status.detector;
   const live = status.racks.filter((k) => k.status === "ok");
-  const demoCams = cams.filter((c) => c.demo).length;
   const count = (key, label, value, of, sub, series, max) => {
     const t = tile(key);
     field(t, "label", label);
@@ -921,19 +895,14 @@ function renderKpis(status) {
     field(t, "sub", sub);
     field(t, "trend", trendSvg(series, now, TREND_S, max, `${label}, last 10 minutes`));
   };
-  let t = tile("server");
+  const t = tile("server");
   field(t, "label", "Server");
   field(t, "n", `v${esc(status.app.version)}`);
   field(t, "sub", `up ${ago(status.app.uptime_s).replace(" ago", "")}`);
-  t = tile("detector");
-  field(t, "label", "Detector");
-  field(t, "n", d.reachable ? chip("good", "dot", "Reachable") : chip("critical", "square", "Down"));
-  field(t, "sub", d.mode === "fake" ? "built-in stand-in" : esc(d.url));
   count("cameras", "Cameras online", cams.filter((c) => c.online).length, ` / ${cams.length}`,
-    cams.some((c) => c.too_hot) ? `${icon("warning", "tri")}one or more too hot` : demoCams ? `${demoCams} fed with demo data` : "alive within the stale window",
-    trends.cameras, cams.length);
-  count("racks", "Racks live", live.length, ` / ${status.racks.length}`, live.length === status.racks.length ? "all racks reporting" : "some without live data", trends.racks, status.racks.length);
-  count("free", "Free spaces now", live.reduce((sum, k) => sum + k.free, 0), ` / ${live.reduce((sum, k) => sum + k.capacity, 0)}`, "on the live racks", trends.free, live.reduce((sum, k) => sum + k.capacity, 0));
+    cams.some((c) => c.too_hot) ? `${icon("warning", "tri")}one or more too hot` : "", trends.cameras, cams.length);
+  count("racks", "Racks live", live.length, ` / ${status.racks.length}`, "", trends.racks, status.racks.length);
+  count("free", "Free spaces, live racks", live.reduce((sum, k) => sum + k.free, 0), ` / ${live.reduce((sum, k) => sum + k.capacity, 0)}`, "", trends.free, live.reduce((sum, k) => sum + k.capacity, 0));
 }
 
 function renderActivity(status) {
@@ -943,8 +912,7 @@ function renderActivity(status) {
   const shape = rows.map(([key]) => key).join();
   if (box.dataset.rows !== shape) {
     box.innerHTML = `${rows.map(([key, label, title]) => `<div class="act-row" data-row="${esc(key)}"><span class="act-label" title="${esc(title)}">${esc(label)}</span><div class="act-track"></div></div>`).join("")}
-      <div class="act-axis" aria-hidden="true"><span>5 min ago</span><span>now</span></div>
-      <p class="act-key"><span><i class="key-tick"></i>new picture</span><span>${icon("critical", "tri")}camera error</span><span>${icon("critical", "square")}detector error</span></p>`;
+      <div class="act-axis" aria-hidden="true"><span>5 min ago</span><span>now</span></div>`;
     box.dataset.rows = shape;
   }
   const ids = new Set(marks.map((m) => m.id));
@@ -1008,7 +976,7 @@ function cameraSkeleton(c) {
         <line class="gauge-limit" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"/></svg></div><figcaption data-f="temp"></figcaption></figure>
       <figure class="instrument"><div class="visual"><div class="block-bar"><div class="block-fill"></div><span class="block-mark" style="left: ${(100 * LOW_BLOCK_BYTES) / BLOCK_SCALE_BYTES}%"></span></div></div><figcaption data-f="mem"></figcaption></figure>
     </div>
-    <div class="uptime"><div class="uptime-bar"><div class="uptime-fill"></div><span class="uptime-reboot" hidden>${MORE_ICONS.reboot}</span></div><p class="uptime-text" data-f="uptime"></p></div>
+    <p class="uptime-text" data-f="uptime"></p>
     <p class="card-detect" data-f="detect"></p>
     <div class="card-preview" data-f="preview"></div>
     <p class="card-foot"><span data-f="node"></span><span class="tag" data-f="source"></span><span><b class="pictures">0</b> pictures</span><span data-f="seen"></span></p>
@@ -1024,13 +992,21 @@ function wifiBars(dbm) {
 
 function renderCameras(status, rose) {
   const now = status.generated_at;
+  field(document, "cameras-help", [
+    "Bars: WiFi signal.",
+    `Gauge: chip temperature. The tick is the ${HOT_LIMIT_C} C limit; above it the board takes no pictures.`,
+    `Bar: largest free memory block. Below its tick (${LOW_BLOCK_BYTES / 1024} KB) pictures may fail.`,
+    `Online: the node answered in the last ${status.app.stale_after_s} s.`,
+    `A space is ready once it has a full window of ${status.app.free_after_clean} pictures.`,
+    "Push: the node sends its pictures. Pull: the app fetches them.",
+  ].map((line) => `<p>${line}</p>`).join(""));
   keyed(el("cameras"), status.cameras, (c) => c.rack, cameraSkeleton, "cam").forEach((card, i) => {
     const c = status.cameras[i];
     const n = c.node;
     card.dataset.state = c.too_hot ? "warning" : c.online ? "good" : c.last_alive_at === null ? "muted" : "critical";
     field(card, "name", esc(status.racks.find((k) => k.id === c.rack)?.name ?? ""));
     const rack = status.racks.find((k) => k.id === c.rack);
-    field(card, "chips", `${cameraChip(c)}${rack ? rackChip(rack) : ""}${demoChip(c, status)}`);
+    field(card, "chips", `${cameraChip(c)}${rack ? rackChip(rack) : ""}${realChip(c, status)}`);
 
     const dbm = n.wifi_rssi_dbm;
     field(card, "bars", wifiBars(dbm));
@@ -1041,30 +1017,22 @@ function renderCameras(status, rose) {
     gauge.querySelector(".gauge-fill").style.strokeDasharray = `${temp === null ? 0 : (tempShare(temp) * 100).toFixed(1)} 100`;
     gauge.dataset.level = c.too_hot ? "hot" : "ok";
     gauge.setAttribute("aria-label", temp === null ? "Chip temperature not reported" : `Chip temperature ${temp} C, limit ${HOT_LIMIT_C} C`);
-    field(card, "temp", temp === null ? `<b>n/a</b><span>Chip, limit ${HOT_LIMIT_C} C</span>`
-      : `<b>${Math.round(temp)} C</b><span>${c.too_hot ? `${icon("warning", "tri")}over ${HOT_LIMIT_C} C` : `Chip, limit ${HOT_LIMIT_C} C`}</span>`);
+    field(card, "temp", temp === null ? "<b>n/a</b><span>Chip</span>"
+      : `<b>${Math.round(temp)} C</b><span>${c.too_hot ? `${icon("warning", "tri")}over ${HOT_LIMIT_C} C` : "Chip"}</span>`);
 
     const block = n.heap_largest_block;
     const low = block !== null && block < LOW_BLOCK_BYTES;
     card.querySelector(".block-fill").style.width = `${block === null ? 0 : Math.min(100, (100 * block) / BLOCK_SCALE_BYTES).toFixed(1)}%`;
     card.querySelector(".block-bar").dataset.level = low ? "low" : "ok";
-    card.querySelector(".block-bar").title = `Largest free memory block; below ${LOW_BLOCK_BYTES / 1024} KB pictures may fail`;
     field(card, "mem", block === null ? "<b>n/a</b><span>Free block</span>" : `<b>${Math.round(block / 1024)} KB</b><span>${low ? `${icon("warning", "tri")}Low, ` : ""}free block</span>`);
 
     const up = n.uptime_s;
     const rebooted = n.rebooted_at !== null && now - n.rebooted_at < REBOOT_SHOWN_S;
-    const share = up === null ? 0 : Math.min(1, up / UPTIME_WINDOW_S);
-    card.querySelector(".uptime-fill").style.width = `${(share * 100).toFixed(1)}%`;
-    card.querySelector(".uptime-bar").title = "The last hour: the filled part is time since the node started";
-    const marker = card.querySelector(".uptime-reboot");
-    marker.hidden = !rebooted;
-    marker.style.right = `${(share * 100).toFixed(1)}%`;
-    field(card, "uptime", up === null ? "Uptime not reported" : `Up ${ago(up).replace(" ago", "")}${rebooted ? `, <b>rebooted</b> ${ago(now - n.rebooted_at)}` : ""}`);
+    field(card, "uptime", up === null ? "Uptime not reported" : `Up ${ago(up).replace(" ago", "")}${rebooted ? `, <b>restarted</b> ${ago(now - n.rebooted_at)}` : ""}`);
 
     field(card, "node", esc(c.node_id ?? "unknown node"));
-    const source = card.querySelector('[data-f="source"]');
     field(card, "source", c.source ? `${MORE_ICONS[c.source] ?? ""}${esc(c.source)}` : "");
-    source.title = c.source === "pull" ? "The server fetches pictures from the node" : c.source === "push" ? "The node sends its pictures"
+    card.querySelector('[data-f="source"]').title = c.source === "pull" ? "The server fetches pictures from the node" : c.source === "push" ? "The node sends its pictures"
       : c.source === "vision" ? "The vision service on the laptop decides the spaces; the app reads them" : "";
     roll(card.querySelector(".pictures"), c.pictures);
     const bytes = c.last_picture_bytes;
@@ -1079,6 +1047,35 @@ function renderCameras(status, rose) {
     if (rose.has(c.rack)) pulse(card);
   });
 }
+
+/* Info buttons: a tip opens on hover, focus or a tap and closes on Escape or a tap elsewhere. A tap or a click keeps it
+   open until the next one; a key press toggles it, as focus has already opened it. */
+el("activity-help").innerHTML = `<p class="act-key"><span><i class="key-tick"></i>new picture</span><span>${icon("critical", "tri")}camera error</span><span>${icon("critical", "square")}detector error</span></p>`;
+const tips = [...document.querySelectorAll(".info")].map((box) => {
+  const button = box.querySelector(".info-btn");
+  const tip = box.querySelector(".info-tip");
+  let pinned = false;
+  const show = (open, pin = false) => {
+    pinned = open && pin;
+    tip.hidden = !open;
+    button.setAttribute("aria-expanded", String(open));
+  };
+  box.addEventListener("pointerenter", (event) => event.pointerType === "mouse" && show(true, pinned));
+  box.addEventListener("pointerleave", (event) => event.pointerType === "mouse" && !pinned && show(false));
+  button.addEventListener("focus", () => show(true, pinned));
+  button.addEventListener("blur", () => pinned || show(false));
+  button.addEventListener("click", (event) => {
+    const close = !tip.hidden && (pinned || event.detail === 0);
+    show(!close, true);
+  });
+  return { box, show, open: () => !tip.hidden };
+});
+document.addEventListener("pointerdown", (event) => tips.forEach((t) => t.box.contains(event.target) || t.show(false)));
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !tips.some((t) => t.open())) return;
+  tips.forEach((t) => t.show(false));
+  event.stopImmediatePropagation(); // this Escape only closes the tip, the next one zooms the diagram out
+}, true);
 
 function render(status) {
   lastStatus = status;

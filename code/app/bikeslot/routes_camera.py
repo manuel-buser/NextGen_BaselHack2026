@@ -39,6 +39,5 @@ async def picture(rack_id: str, request: Request) -> JSONResponse:
     image = await request.body()
     if not image:
         raise HTTPException(status_code=400, detail="empty body, expected a JPEG")
-    headers = request.headers
-    body, code = await ingest_picture(request.app, rack, image, headers.get("x-node-id"), time.time(), "push", headers.get("x-demo-clock"))
+    body, code = await ingest_picture(request.app, rack, image, request.headers.get("x-node-id"), time.time(), "push")
     return JSONResponse(body, status_code=code)
