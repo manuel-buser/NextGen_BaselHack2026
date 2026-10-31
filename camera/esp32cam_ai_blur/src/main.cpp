@@ -3,7 +3,7 @@
 // Every picture is processed on the ESP32-S3 before it leaves the camera:
 //   raw RGB565 frame -> ESP-DL pedestrian detector -> people pixelated -> JPEG
 // and then pushed to the server every SNAPSHOT_INTERVAL_S, or fetched by the laptop via
-// GET /capture (pull mode, poll_camera.py). GET / is a live view for aiming the camera.
+// GET /snapshot (pull mode, poll_camera.py). GET / is a live view for aiming the camera.
 // Unblurred frames exist only in camera RAM for the ~1 s of processing.
 //
 // Board: Seeed XIAO ESP32S3 Sense (OV2640 / OV3660), ESP-IDF >= 5.3, ESP-DL pedestrian_detect.
@@ -898,7 +898,7 @@ static void web_start()
     httpd_handle_t server = nullptr;
     ESP_ERROR_CHECK(httpd_start(&server, &cfg));
     const httpd_uri_t page = {.uri = "/", .method = HTTP_GET, .handler = page_handler, .user_ctx = nullptr};
-    const httpd_uri_t cap = {.uri = "/capture", .method = HTTP_GET, .handler = capture_handler, .user_ctx = nullptr};
+    const httpd_uri_t cap = {.uri = "/snapshot", .method = HTTP_GET, .handler = capture_handler, .user_ctx = nullptr};
     httpd_register_uri_handler(server, &page);
     httpd_register_uri_handler(server, &cap);
     const httpd_uri_t status = {.uri = "/status", .method = HTTP_GET, .handler = status_handler, .user_ctx = nullptr};
