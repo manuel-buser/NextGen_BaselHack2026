@@ -38,6 +38,20 @@ def taken_a(taken: int) -> bytes:
     return b"x" * (10 * (CAPACITY_A + 1) + taken)  # fake detector: len % (capacity + 1) slots taken
 
 
+def fetch_or_abort(route):
+    """route.fetch(), or None after aborting: a reset under load must not fail the test at teardown."""
+    from playwright.sync_api import Error
+
+    try:
+        return route.fetch()
+    except Error:
+        try:
+            route.abort()
+        except Error:
+            pass
+        return None
+
+
 @pytest.fixture(scope="module")
 def server(tmp_path_factory):
     racks_file = tmp_path_factory.mktemp("racks") / "racks.yaml"
@@ -127,14 +141,16 @@ def test_open_tile_shows_the_selected_rack_and_follows_the_refresh(server, page)
     assert page.evaluate("document.activeElement.closest('.tile').dataset.rack") == "A"  # the refresh kept the keyboard focus
 
 
-def test_demo_rack_is_marked_and_shows_made_up_spaces(server, page):
+def test_demo_rack_looks_like_any_rack_and_shows_made_up_spaces(server, page):
     picture(server, "C", b"DEMO:101100000000", times=3)  # made-up picture: spaces 1, 3 and 4 taken
     page.goto(server + "/")
     page.wait_for_selector(".tile[data-rack='C'].tile--live")
     tile = page.locator(".tile[data-rack='C']")
-    assert tile.locator(".tile__title .chip--demo").inner_text() == "Demo data"
+    assert tile.locator(".tile__title .chip").count() == 0
     assert tile.locator(".tile__head > .chip").inner_text() == "Live"
-    assert page.locator("#note").is_visible()
+    assert page.locator(".tile[data-rack='A'] .tile__title .chip--real").inner_text() == "Real camera"
+    assert "demo" not in page.locator("body").inner_text().lower()  # no chip, map key entry or footer note
+    assert page.locator(".chip--demo, .pin--demo, #note").count() == 0
     tile.locator(".tile__head").click()
     page.wait_for_selector(".tile[data-rack='C'].is-open .plan-wrap--free .cell")  # no layout: the spaces simply wrap
     assert page.locator(".tile.is-open").count() == 1
@@ -145,8 +161,9 @@ def test_admin_page_lists_components(server, page):
     page.goto(server + "/admin")
     page.wait_for_selector("#detector:has-text('fake')")
     assert "Online" in page.locator("#cameras").inner_text()
-    assert "Demo" in page.locator("#cameras").inner_text()
-    assert "Reachable" in page.locator("#kpis").inner_text()
+    assert "Real camera" in page.locator("#cameras").inner_text()  # rack C is demo
+    assert "Reachable" in page.locator("#detector").inner_text()
+    assert page.locator("#kpis .stat").count() == 4
     assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
 
 
@@ -350,7 +367,7 @@ def history(learning: bool = False, days: int = 4) -> str:
     insights = {"usually_full_by": "08:15", "best_before": "07:45", "usual_free_now": 3.4, "days": days, "learning": False}
     if learning:
         insights = {"usually_full_by": None, "best_before": None, "usual_free_now": None, "days": days, "learning": True}
-    body = {"rack": "A", "clock": "real", "now": "07:40", "day_type": "weekday", "free_now": 6, "capacity": 15, "today": today, "typical": typical, "insights": insights}
+    body = {"rack": "A", "now": "07:40", "day_type": "weekday", "free_now": 6, "capacity": 15, "today": today, "typical": typical, "insights": insights}
     return json.dumps(body)
 
 
@@ -461,15 +478,14 @@ def test_admin_flow_dot_stays_under_the_boxes_in_the_overview(server, page):
 
 def test_admin_camera_cards_fit_a_laptop_screen(server, page):
     node = {"tempC": 41.2, "tooHot": False, "wifi_rssi_dbm": -79, "wifi_connected": True, "heap_largest_block": 81920}
-    for uptime_s in (4100, 12):  # the uptime dropped: shown as rebooted
+    for uptime_s in (4100, 12):  # the uptime dropped: shown as restarted
         httpx.post(f"{server}/api/camera/A/alive", json={**node, "uptime_s": uptime_s}, headers={"X-Node-Id": "esp32-a"})
     page.set_viewport_size({"width": 1280, "height": 800})
     try:
         page.goto(server + "/admin")
-        page.wait_for_selector("#cameras:has-text('rebooted')")
+        page.wait_for_selector("#cameras:has-text('restarted')")
         card = page.locator("#cameras .card[data-key='A']")
         assert card.locator(".chip-real").inner_text() == "Real camera"  # rack C is demo
-        assert card.locator(".uptime-reboot").is_visible()
         assert page.evaluate("(() => { const box = document.querySelector('#cameras'); return box.scrollWidth <= box.clientWidth; })()")
     finally:
         page.set_viewport_size({"width": 390, "height": 844})
@@ -491,7 +507,7 @@ def test_admin_step_can_be_selected_while_zoomed_in(server, page):
         desk.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] * 0.85)
         desk.wait_for_selector("#flow-detail:has-text('App receives the picture')", timeout=3000)
     finally:
-        desk.close()
+        close(desk)
 
 
 def test_admin_camera_card_shows_signal_bars_and_a_temperature_gauge(server, page):
@@ -555,7 +571,8 @@ def test_admin_flow_decide_step_deletes_the_picture_before_the_rules(server, pag
     assert decide.locator(".note[data-note='foot']").text_content().startswith("clock rule: a rack shows stale after")
     decide.click()
     page.wait_for_selector("#flow-detail:has-text('applies the rules')")
-    text = page.locator("#flow-detail").inner_text()
+    page.click("#flow-detail summary")  # "What happens" is collapsed
+    text = page.locator("#flow-detail .flow-how").inner_text()
     assert text.index("deleted") < text.index("confidence rule") < text.index("3-picture rule")
 
 
@@ -597,10 +614,16 @@ def test_admin_wheel_stop_inside_the_fade_never_rests_half_faded(server, page):
             desk.wait_for_timeout(800)
             assert desk.locator("#flow").get_attribute("data-level") == settled
     finally:
-        desk.close()
+        close(desk)
 
 
 SBB = {"name": "Basel SBB", "lat": 47.5476, "lng": 7.5897}  # about 420 m from rack A and 540 m from rack B
+
+
+def close(view) -> None:
+    """Close a page whose routes may still be fetching: closing would fail that fetch and raise its error here."""
+    view.unroute_all(behavior="ignoreErrors")
+    view.close()
 
 
 def search_page(server, page, width: int, asked: list, b_live: bool = False, a_full: dict | None = None):
@@ -613,7 +636,9 @@ def search_page(server, page, width: int, asked: list, b_live: bool = False, a_f
         route.fulfill(json=[SBB])
 
     def racks(route):
-        response = route.fetch()
+        response = fetch_or_abort(route)
+        if response is None:
+            return
         data = response.json()
         for rack in data["racks"]:
             if rack["id"] == "B" and b_live:
@@ -628,7 +653,7 @@ def search_page(server, page, width: int, asked: list, b_live: bool = False, a_f
     try:
         map_ready(fresh)
     except BaseException:
-        fresh.close()
+        close(fresh)
         raise
     fresh.wait_for_selector(".tile[data-rack='A'].tile--live")
     return fresh
@@ -654,7 +679,7 @@ def test_typed_destination_is_looked_up_and_picks_the_nearest_live_rack(server, 
         desk.wait_for_function("map.getBounds().contains([47.5476, 7.5897]) && map.getBounds().contains([47.5463, 7.5950])", timeout=8000)
         assert "OpenStreetMap" in desk.locator(".dest-note").inner_text()
     finally:
-        desk.close()
+        close(desk)
 
 
 def test_a_rack_that_fills_up_hands_over_on_the_next_refresh(server, page):
@@ -671,7 +696,7 @@ def test_a_rack_that_fills_up_hands_over_on_the_next_refresh(server, page):
         assert desk.locator(".tile[data-rack='B'].is-open").count() == 1
         assert desk.locator("path.dest-line").count() == 1 and desk.locator(".dest-mark").count() == 1
     finally:
-        desk.close()
+        close(desk)
 
 
 def test_far_destination_says_how_far_and_a_failing_search_keeps_the_rest(server, page):
@@ -693,7 +718,7 @@ def test_far_destination_says_how_far_and_a_failing_search_keeps_the_rest(server
         desk.press("#dest-q", "Enter")
         desk.wait_for_selector("#dest-result:has-text('Main entrance shelter: 10 free')")
     finally:
-        desk.close()
+        close(desk)
 
 
 def test_phone_control_folds_into_one_button_clear_of_the_rack_card(server, page):
@@ -720,7 +745,7 @@ def test_phone_control_folds_into_one_button_clear_of_the_rack_card(server, page
         assert phone.locator("#dest-q").is_hidden() and phone.locator("#dest-result").is_visible()  # folded again, answer kept
         assert phone.evaluate("document.documentElement.scrollWidth") <= 390
     finally:
-        phone.close()
+        close(phone)
 
 
 def test_skeleton_shows_until_the_first_data(server, page):
@@ -763,3 +788,450 @@ def test_two_panes_on_a_laptop_and_one_column_on_a_phone(server, page):
                 assert view.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         finally:
             view.close()
+
+
+THEME = "document.documentElement.dataset.theme || null"
+BACKGROUND = "getComputedStyle(document.body).backgroundColor"
+LABEL = "document.getElementById('theme-toggle').getAttribute('aria-label')"
+
+
+def test_theme_toggle_follows_the_device_until_clicked_and_remembers_the_choice(server, page):
+    view = page.context.browser.new_page(viewport={"width": 390, "height": 844}, color_scheme="light")  # own storage
+    try:
+        view.goto(server + "/")
+        toggle = view.locator("header.hdr #theme-toggle")
+        light = view.evaluate(BACKGROUND)
+        assert view.evaluate(THEME) is None and toggle.get_attribute("aria-label") == "Switch to dark mode"
+        assert toggle.locator(".moon").is_visible() and not toggle.locator(".sun").is_visible()
+        box = toggle.bounding_box()
+        assert box["width"] >= 40 and box["height"] >= 40
+        view.emulate_media(color_scheme="dark")  # nothing stored yet: follows the device
+        assert view.evaluate(THEME) is None and view.evaluate(BACKGROUND) != light
+        view.wait_for_function(f"{LABEL} === 'Switch to light mode'")  # the label follows on the device's change event
+        assert toggle.locator(".sun").is_visible()
+        view.emulate_media(color_scheme="light")
+        view.wait_for_function(f"{LABEL} === 'Switch to dark mode'")
+        view.keyboard.press("Tab")  # the first stop on the page
+        assert view.evaluate("document.activeElement.id") == "theme-toggle"
+        assert toggle.evaluate("(b) => getComputedStyle(b).outlineStyle") == "solid"
+        view.keyboard.press("Enter")
+        assert view.evaluate(THEME) == "dark" and view.evaluate(BACKGROUND) != light  # colours follow without a reload
+        assert toggle.get_attribute("aria-label") == "Switch to light mode" and toggle.locator(".sun").is_visible()
+        view.reload()
+        assert view.evaluate(THEME) == "dark"
+        view.goto(server + "/admin")  # one choice for both pages
+        toggle = view.locator("header.masthead #theme-toggle")
+        assert view.evaluate(THEME) == "dark" and toggle.get_attribute("aria-label") == "Switch to light mode"
+        box = toggle.bounding_box()
+        assert box["width"] >= 40 and box["height"] >= 40
+        dark = view.evaluate(BACKGROUND)
+        toggle.click()
+        chosen = view.evaluate(BACKGROUND)
+        assert view.evaluate(THEME) == "light" and chosen != dark
+        assert toggle.get_attribute("aria-label") == "Switch to dark mode" and toggle.locator(".moon").is_visible()
+        view.emulate_media(color_scheme="dark")  # a stored choice wins over the device
+        view.reload()
+        assert view.evaluate(THEME) == "light" and view.evaluate(BACKGROUND) == chosen
+        assert toggle.get_attribute("aria-label") == "Switch to dark mode"
+    finally:
+        view.close()
+
+
+def test_stored_theme_is_set_before_the_body_is_parsed(server, page):
+    view = page.context.browser.new_page(viewport={"width": 390, "height": 844}, color_scheme="light")
+
+    def probe(route):  # an inline script at the top of <body> reads the theme before any of the page shows
+        response = fetch_or_abort(route)
+        if response is None:
+            return
+        body = response.text().replace("<body>", "<body><script>window.themeAtBody = document.documentElement.dataset.theme || null;</script>", 1)
+        route.fulfill(response=response, body=body)
+
+    try:
+        view.goto(server + "/admin")
+        view.evaluate("localStorage.setItem('bikeslot-theme', 'dark')")
+        for path in ("/", "/admin"):
+            view.route(server + path, probe)
+            view.goto(server + path)
+            assert view.evaluate("window.themeAtBody") == "dark"
+            view.unroute(server + path)
+    finally:
+        view.close()
+
+
+def test_theme_toggle_works_when_storage_is_blocked(server, page):
+    view = page.context.browser.new_page(viewport={"width": 390, "height": 844}, color_scheme="light")
+    errors = []
+    view.on("pageerror", lambda exc: errors.append(str(exc)))
+    view.add_init_script("Object.defineProperty(window, 'localStorage', { get() { throw new DOMException('blocked', 'SecurityError'); } });")
+    try:
+        for path in ("/", "/admin"):
+            view.goto(server + path)
+            view.wait_for_selector(".tile[data-rack], .stat")
+            view.click("#theme-toggle")
+            assert view.evaluate(THEME) == "dark"
+            view.reload()
+            assert view.evaluate(THEME) is None  # nothing could be stored: back to the device
+        assert errors == []
+    finally:
+        view.close()
+
+
+def test_map_keeps_its_colours_in_both_themes(server, page):
+    view = page.context.browser.new_page(viewport={"width": 390, "height": 844})
+    map_filter = "getComputedStyle(document.documentElement).getPropertyValue('--map-filter').trim()"
+    try:
+        filters = {}
+        for scheme in ("light", "dark"):
+            view.emulate_media(color_scheme=scheme)
+            view.goto(server + "/")
+            filters[scheme] = view.evaluate(map_filter)
+        view.emulate_media(color_scheme="light")
+        view.evaluate("document.documentElement.dataset.theme = 'dark'")
+        assert view.evaluate(map_filter) == filters["dark"]  # the toggle's dark block matches the device's
+        assert "grayscale" not in filters["light"] + filters["dark"]
+        assert "hue-rotate(180deg)" in filters["dark"]  # turns the inverted colours back: green parks, blue water
+    finally:
+        view.close()
+
+
+def test_admin_shows_the_cameras_first_and_the_diagram_below(server, page):
+    page.goto(server + "/admin")
+    page.wait_for_selector("#cameras .card")
+    order = page.evaluate("[...document.querySelectorAll('#cameras, #flow, #kpis, #activity, #detector')].map((node) => node.id)")
+    assert order == ["cameras", "flow", "kpis", "activity", "detector"]
+    assert page.locator("main h2").first.inner_text().lower() == "cameras"
+
+
+def test_admin_info_button_opens_on_hover_focus_and_tap_and_closes(server, page):
+    desk = page.context.browser.new_page(viewport={"width": 1280, "height": 900})
+    try:
+        desk.goto(server + "/admin")
+        desk.wait_for_selector("#flow .node[data-node='camera'][data-state]")
+        button = desk.locator("[aria-controls='flow-help']")
+        tip = desk.locator("#flow-help")
+        assert button.get_attribute("aria-label") == "How to read the diagram" and desk.locator("#flow figcaption").count() == 0
+        assert not tip.is_visible() and button.get_attribute("aria-expanded") == "false"
+        button.hover()
+        tip.wait_for(state="visible")
+        assert "left to right" in tip.inner_text() and button.get_attribute("aria-expanded") == "true"
+        box = tip.bounding_box()
+        desk.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)  # the pointer can move onto the tip
+        assert tip.is_visible()
+        desk.mouse.move(5, 5)
+        tip.wait_for(state="hidden")
+        desk.locator("[aria-controls='cameras-help']").focus()
+        assert desk.locator("#cameras-help").is_visible()
+        desk.keyboard.press("Tab")  # the next stop is the diagram's info button
+        assert desk.evaluate("document.activeElement.getAttribute('aria-controls')") == "flow-help"
+        assert not desk.locator("#cameras-help").is_visible()
+        tip.wait_for(state="visible")
+        desk.keyboard.press("Escape")
+        tip.wait_for(state="hidden")
+        desk.keyboard.press("Enter")  # a key press toggles
+        tip.wait_for(state="visible")
+        desk.keyboard.press("Enter")
+        tip.wait_for(state="hidden")
+    finally:
+        close(desk)
+    phone = page.context.browser.new_page(viewport={"width": 390, "height": 844}, has_touch=True)
+    try:
+        phone.goto(server + "/admin")
+        phone.wait_for_selector("#cameras .card")
+        button = phone.locator("[aria-controls='cameras-help']")
+        tip = phone.locator("#cameras-help")
+        button.tap()
+        tip.wait_for(state="visible")
+        assert "chip temperature" in tip.inner_text()
+        tip.tap()  # reading it keeps it open
+        assert tip.is_visible()
+        phone.tap("h1")
+        tip.wait_for(state="hidden")
+        button.tap()
+        tip.wait_for(state="visible")
+        button.tap()  # a second tap closes it
+        tip.wait_for(state="hidden")
+        assert phone.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+    finally:
+        phone.close()
+
+
+def test_admin_what_happens_is_collapsed_and_the_live_numbers_show(server, page):
+    page.goto(server + "/admin")
+    page.wait_for_selector("#flow-detail .flow-title:has-text('Camera node')")
+    how = page.locator("#flow-detail details.flow-how")
+    assert how.get_attribute("open") is None and not how.locator("p").is_visible()
+    rows = page.locator("#flow-detail dl")  # the camera cards above already show every camera number
+    assert rows.inner_html() == "" and not rows.is_visible()
+    how.locator("summary").click()
+    assert "heat guard" in how.locator("p").inner_text()
+    page.evaluate("refresh()")
+    assert how.locator("p").is_visible()  # patched, not rebuilt: still open after a refresh
+    page.locator("#flow .node[data-node='pages']").click()
+    assert how.locator("p").inner_text().startswith("Two loops")
+    assert "Free spaces now" in page.locator("#flow-detail dl").inner_text()
+
+
+def test_admin_uptime_is_plain_text_without_a_restart_marker(server, page):
+    node = {"tempC": 41.2, "tooHot": False, "wifi_rssi_dbm": -60, "wifi_connected": True, "heap_largest_block": 150000}
+    for uptime_s in (4100, 12):  # the uptime dropped: the node restarted
+        httpx.post(f"{server}/api/camera/A/alive", json={**node, "uptime_s": uptime_s}, headers={"X-Node-Id": "esp32-a"})
+    page.goto(server + "/admin")
+    uptime = page.locator("#cameras .card[data-key='A'] [data-f='uptime']")
+    uptime.locator("b:has-text('restarted')").wait_for()
+    text = uptime.inner_text()
+    assert text.startswith("Up 12 s, restarted ") and text.endswith(" ago")
+    assert page.locator("#cameras .uptime-bar, #cameras .uptime-reboot").count() == 0 and uptime.locator("svg").count() == 0
+
+
+def test_admin_page_has_no_demo_labels(server, page):
+    picture(server, "C", b"DEMO:101100000000", times=3)  # rack C is demo
+    page.goto(server + "/admin")
+    page.wait_for_selector("#cameras .card[data-key='C'] .chip")
+    words = "() => [document.body.textContent, ...[...document.querySelectorAll('[aria-label], [title]')].map((n) => `${n.getAttribute('aria-label')} ${n.getAttribute('title')}`)].join(' ').toLowerCase()"
+    for step in ("camera", "receive", "detector", "decide", "pages"):  # the detail shows one step at a time
+        page.locator(f"#flow .node[data-node='{step}']").click()
+        page.wait_for_selector(f"#flow .node[data-node='{step}'].selected")
+        assert "demo" not in page.evaluate(words)
+    assert page.locator("#cameras .chip-real").count() == 2  # racks A and B still stand out as the real cameras
+
+
+def routed_page(server, page, width: int, change):
+    """A fresh page whose /api/racks answer is passed through change(racks) first."""
+    fresh = page.context.browser.new_page(viewport={"width": width, "height": 844})
+
+    def racks(route):
+        response = fetch_or_abort(route)
+        if response is None:
+            return
+        data = response.json()
+        change(data["racks"])
+        route.fulfill(response=response, json=data)
+
+    fresh.route("**/api/racks", racks)
+    fresh.goto(server + "/")
+    return fresh
+
+
+def live(rack: dict, free: int) -> None:
+    rack.update(status="ok", free=free, age_s=1, slots=[{"id": i + 1, "state": "free" if i < free else "taken"} for i in range(rack["capacity"])])
+
+
+def test_most_space_button_stays_hidden_until_two_racks_are_live(server, page):
+    count = {"live": 1}
+
+    def change(racks):
+        for index, rack in enumerate(racks):
+            if index < count["live"]:
+                live(rack, 4 + index)
+            else:
+                rack.update(status="starting", free=None, slots=[])
+
+    fresh = routed_page(server, page, 390, change)
+    try:
+        fresh.wait_for_selector(".tile[data-rack='A'].tile--live")
+        assert fresh.locator("#hero .btn").is_hidden()  # one live rack: no empty button with only its icons
+        count["live"] = 2
+        fresh.wait_for_selector("#hero .btn:visible", timeout=8000)
+        assert fresh.locator("#hero .btn__label").inner_text() == "Most space: Building 2, north side"
+    finally:
+        close(fresh)
+
+
+def test_only_the_selected_rack_shows_its_card_on_the_map(server, page):
+    picture(server, "A", taken_a(5), times=3)
+    page.goto(server + "/")
+    map_ready(page)
+    page.wait_for_selector(".tile[data-rack='A'].is-open")
+    page.evaluate("map.setView([47.5467, 7.5960], 19, {animate: false})")
+    page.wait_for_selector(".leaflet-marker-icon .mcard")
+    assert page.locator(".leaflet-marker-icon .mcard").count() == 1
+    assert page.locator(".leaflet-marker-icon[title='Main entrance shelter'] .mcard").count() == 1
+    assert page.locator(".leaflet-marker-icon[title='Building 2, north side'] .pin").count() == 1
+    page.evaluate("map.setView([47.5472, 7.5969], 19, {animate: false})")
+    page.click(".leaflet-marker-icon[title='Building 2, north side'] .pin")  # the card moves to the tapped rack
+    page.wait_for_selector(".leaflet-marker-icon[title='Building 2, north side'] .mcard")
+    assert page.locator(".leaflet-marker-icon .mcard").count() == 1
+    assert page.locator(".leaflet-marker-icon[title='Main entrance shelter'] .pin").count() == 1
+    page.click(".tile[data-rack='B'] .tile__head")  # nothing selected: no card at all
+    page.wait_for_selector(".leaflet-marker-icon .mcard", state="detached")
+    assert page.locator(".leaflet-marker-icon .pin").count() == 2
+
+
+LABEL_OVERLAPS = """(plan) => { const boxes = [...plan.querySelectorAll('.cell > span')].filter((s) => !s.hidden)
+    .map((s) => s.getBoundingClientRect()).sort((a, b) => a.left - b.left);
+    return boxes.some((box, i) => i > 0 && box.left < boxes[i - 1].right + 1); }"""
+
+
+def test_plan_numbers_show_only_where_they_fit(server, page):
+    for capacity in (8, 15, 29, 36):
+
+        def change(racks, capacity=capacity):
+            rack = racks[0]
+            rack["capacity"] = capacity
+            rack["layout"].update(width=capacity, spaces=[{"id": i + 1, "x": i, "y": 0, "w": 1, "h": 1} for i in range(capacity)])
+            live(rack, capacity - 3)
+            for other in racks[1:]:  # rack A alone is live, so its tile opens first
+                other.update(status="starting", free=None, slots=[])
+
+        for width in (390, 1280):
+            fresh = routed_page(server, page, width, change)
+            try:
+                fresh.wait_for_selector(".tile[data-rack='A'].is-open .plan .cell--free")
+                plan = fresh.locator(".tile[data-rack='A'] .tile__live .plan")
+                assert plan.locator(".cell").count() == capacity
+                shown = plan.locator(".cell > span:not([hidden])").all_inner_texts()
+                assert shown[0] == "1" and not plan.evaluate(LABEL_OVERLAPS), (capacity, width, shown)
+                if capacity >= 29:  # narrow cells: 1 and every 5th, under the cells
+                    assert len(shown) < capacity and "5" in shown and "10" in shown, (capacity, width, shown)
+                    assert "is-sparse" in plan.get_attribute("class")
+                if capacity == 8:
+                    assert len(shown) == 8
+                expected = f"Free spaces: 1 to {capacity - 3}"
+                assert fresh.locator(".tile[data-rack='A'] .plan-free").inner_text() == expected
+            finally:
+                close(fresh)
+
+
+def test_read_once_texts_sit_behind_info_buttons(server, page):
+    view = page.context.browser.new_page(viewport={"width": 1280, "height": 800})
+    try:
+        view.goto(server + "/")
+        view.wait_for_selector(".tile[data-rack='A']")
+        privacy = view.locator(".pane__foot .info__btn")
+        assert privacy.get_attribute("aria-label") == "Privacy" and view.locator("#privacy-note").is_hidden()
+        privacy.hover()
+        assert view.locator("#privacy-note").inner_text() == "Only counts are kept. No pictures are stored."
+        view.keyboard.press("Escape")
+        assert view.locator("#privacy-note").is_hidden()  # Escape closes it under the pointer too
+        if view.locator(".leaflet-control .dest").count():
+            note = view.locator("#dest-note")
+            assert note.is_hidden() and view.locator(".dest .info__btn").get_attribute("aria-label") == "About the place search"
+            view.locator(".dest .info__btn").click()
+            assert note.is_visible() and view.locator(".dest .info__btn").get_attribute("aria-expanded") == "true"
+            view.mouse.click(5, 300)  # a tap elsewhere closes it
+            assert note.is_hidden() and view.locator(".dest .info__btn").get_attribute("aria-expanded") == "false"
+            view.locator(".dest .info__btn").focus()
+            view.keyboard.press("Shift+Tab")
+            view.keyboard.press("Tab")  # keyboard focus shows it
+            assert note.is_visible()
+    finally:
+        view.close()
+
+
+def as_location(racks: list) -> None:
+    """Rack A and a second section beside it, served as one location the way the server sends a group."""
+    a = racks[0]
+    live(a, 9)
+    second = {**a, "id": "A9", "name": "Second section", "location": {"lat": a["location"]["lat"] - 0.00012, "lng": a["location"]["lng"] + 0.00009}}
+    live(second, 0)
+    second["status"] = "starting"
+    racks[0] = {**a, "id": "Row", "name": "Main row", "capacity": 2 * a["capacity"], "free": 9, "layout": None, "slots": [], "parts": [a, second],
+                "location": {"lat": a["location"]["lat"] - 0.00006, "lng": a["location"]["lng"] + 0.000045}}
+
+
+def test_a_location_is_one_pin_one_entry_and_its_parts_as_rows(server, page):
+    for width in (390, 1280):
+        fresh = routed_page(server, page, width, as_location)
+        try:
+            map_ready(fresh)
+            fresh.wait_for_selector(".tile[data-rack='Row'].is-open .part")
+            assert fresh.locator(".tile[data-rack]").count() == 3 and fresh.locator("#rack-count").inner_text() == "3"
+            assert fresh.locator(".tile[data-rack='Row'] .count__n").inner_text() == "9"
+            assert fresh.locator(".tile[data-rack='Row'] .count__of").inner_text() == f"free of {2 * CAPACITY_A}"
+            rows = fresh.locator(".tile[data-rack='Row'] .part")
+            assert rows.count() == 2 and rows.locator(".plan").count() == 2 and rows.locator(".plan__entry").count() == 2
+            assert rows.locator(".part__n").all_inner_texts() == ["9", "?"]  # the free count ends each row, unknown is never free
+            assert fresh.locator(".tile[data-rack='Row'] .plan-free").count() == 0
+            assert fresh.locator(".leaflet-marker-icon[title='Main row']").count() == 1
+            assert fresh.locator(".leaflet-marker-icon").count() == 2  # the location and rack B; C has no place
+            fresh.evaluate("map.setView([47.54624, 7.59505], 19, {animate: false})")
+            fresh.wait_for_selector(".leaflet-marker-icon[title='Main row'] .mcard .seg")
+            assert fresh.locator(".mcard .seg").all_inner_texts() == ["9", "?"]
+            assert fresh.locator("path.plan-space").count() == 2 * CAPACITY_A  # both sections drawn on the ground
+            assert fresh.evaluate("document.documentElement.scrollWidth") <= width
+        finally:
+            close(fresh)
+
+
+def test_a_pick_on_a_phone_scrolls_the_opened_entry_into_view(server, page):
+    def change(racks):
+        live(racks[0], 9)
+        live(racks[1], 4)
+
+    fresh = routed_page(server, page, 390, change)
+    try:
+        map_ready(fresh)
+        fresh.wait_for_selector(".tile[data-rack='A'].is-open")
+        fresh.evaluate("map.setView([47.5472, 7.5969], 17, {animate: false})")
+        fresh.click(".leaflet-marker-icon[title='Building 2, north side'] .pin")
+        fresh.wait_for_selector(".tile[data-rack='B'].is-open")
+        # at the top of the screen, or as far as the page scrolls
+        fresh.wait_for_function("""() => { const top = document.querySelector(".tile[data-rack='B']").getBoundingClientRect().top;
+            const end = Math.abs(scrollY + innerHeight - document.documentElement.scrollHeight) < 2;
+            return scrollY > 0 && top >= -1 && (top < 2 || end); }""", timeout=8000)
+    finally:
+        close(fresh)
+
+
+def test_folded_place_button_is_the_whole_box_and_the_map_key_shows_shapes_only(server, page):
+    phone = page.context.browser.new_page(viewport={"width": 390, "height": 844})
+    try:
+        phone.goto(server + "/")
+        map_ready(phone)
+        button, box = phone.locator("#dest-open").bounding_box(), phone.locator(".dest").bounding_box()
+        assert button["height"] >= 44 and box["height"] - button["height"] <= 2 and box["width"] - button["width"] <= 2
+        key = phone.locator("#map-key")
+        assert key.locator(".pin").all_inner_texts() == ["", "", ""]
+        assert key.inner_text().split() == ["Free", "Full", "No", "data"]
+    finally:
+        phone.close()
+
+
+GEO_CALLS = """window.geoCalls = 0;
+    const read = navigator.geolocation.getCurrentPosition.bind(navigator.geolocation);
+    navigator.geolocation.getCurrentPosition = (...args) => { window.geoCalls += 1; return read(...args); };"""
+
+
+def test_the_open_tile_says_how_many_are_free_on_arrival_without_sending_the_position(server, page):
+    picture(server, "A", taken_a(5), times=3)
+    context = page.context.browser.new_context(
+        viewport={"width": 390, "height": 844},
+        permissions=["geolocation"],
+        geolocation={"latitude": 47.5467, "longitude": 7.5950},  # about 45 m north of rack A: 1 min by bike
+    )
+    sent = []
+    context.on("request", lambda request: sent.append(f"{request.url} {request.post_data or ''}"))
+    near = context.new_page()
+    try:
+        near.goto(server + "/")
+        near.wait_for_selector(".tile[data-rack='A']")
+        if not near.locator(".tile[data-rack='A'].is-open").count():
+            near.click(".tile[data-rack='A'] .tile__head")
+        line = near.locator(".tile[data-rack='A'] #forecast .arrival")
+        line.wait_for(timeout=10000)
+        assert line.inner_text() == "About 10 free when you arrive (in 1 min)"
+        assert near.locator(".pos-ask").count() == 0
+        assert any("/api/racks/A/history?minutes=1 " in request for request in sent)
+        assert not [request for request in sent if "47.546" in request or "7.595" in request]
+    finally:
+        context.close()
+
+
+def test_without_a_position_there_is_no_arrival_line_and_no_prompt_on_load(server, page):
+    picture(server, "A", taken_a(5), times=3)
+    context = page.context.browser.new_context(viewport={"width": 390, "height": 844})  # permission not decided
+    context.add_init_script(GEO_CALLS)
+    sent = []
+    context.on("request", lambda request: sent.append(request.url))
+    fresh = context.new_page()
+    try:
+        fresh.goto(server + "/")
+        fresh.wait_for_selector(".tile.is-open #forecast .chart")
+        offer = fresh.locator(".tile.is-open .pos-ask")
+        offer.wait_for(timeout=5000)
+        assert offer.inner_text() == "On arrival" and fresh.locator(".arrival").count() == 0
+        assert fresh.evaluate("window.geoCalls") == 0
+        assert not [url for url in sent if "minutes=" in url]
+    finally:
+        context.close()

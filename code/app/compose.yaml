@@ -10,6 +10,8 @@ services:
       # racks.demo.yaml adds made-up racks for a demo with one camera (fed by tools/demo_data.py).
       BIKESLOT_RACKS: ${BIKESLOT_RACKS:-racks.yaml}
       STALE_AFTER_S: ${STALE_AFTER_S:-60}
+      # 0 stops polling the camera blocks in the racks file, for a demo without the real camera
+      CAMERA_PULL: ${CAMERA_PULL:-1}
       # free counts over time; ./data keeps them across restarts
       HISTORY_FILE: /app/data/history.json
       # local clock for the predictions (container default is UTC)
