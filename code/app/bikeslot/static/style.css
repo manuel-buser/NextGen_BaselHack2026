@@ -242,10 +242,6 @@ h1, h2 { text-wrap: balance; }
 .card-foot b { color: var(--ink); }
 .card-detect { color: var(--ink-2); font-size: 0.8125rem; }
 .card-detect b { color: var(--ink); }
-/* vision racks: the service's last preview, fetched through the app and refreshed with the status */
-.card-preview:empty { display: none; }
-.card-preview img { display: block; width: 100%; border-radius: 8px; background: color-mix(in oklab, var(--ink) 6%, var(--surface)); }
-.health-vision { color: var(--ink-2); font-size: 0.8125rem; overflow-wrap: anywhere; }
 .tag { display: inline-flex; align-items: center; gap: 4px; }
 .tag svg { width: 10px; height: 10px; }
 .card-error { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 8px; border-radius: 8px; background: color-mix(in oklab, var(--critical) 12%, var(--surface)); color: var(--ink); font-size: 0.8125rem; cursor: help; }

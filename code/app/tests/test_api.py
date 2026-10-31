@@ -162,7 +162,7 @@ def test_demo_file_has_the_four_sections_and_the_camera_on_section_2():
     assert len(ids) == len(set(ids))
     sections = [r for r in racks if r.get("group") == "Peter Merian-Weg"]
     assert [r["id"] for r in sections] == ["A1", "A2", "A3", "A4"] and sum(r["capacity"] for r in sections) == 67
-    assert [r["id"] for r in racks if "camera" in r] == ["A2"] == [r["id"] for r in sections if not r.get("demo")]
+    assert [r["id"] for r in racks if "vision" in r] == ["A2"] == [r["id"] for r in sections if not r.get("demo")]
 
 
 def layout_app(tmp_path, layout: str, capacity: int = 6):

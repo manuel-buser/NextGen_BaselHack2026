@@ -9,14 +9,11 @@ const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const twoPanes = window.matchMedia("(min-width: 1024px)"); // as in user.css
 
 const icon = (paths, cls = "ico") => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
-const ARROW_IN = '<path d="M21 12H5M10 7l-5 5 5 5"/>';
 const ICONS = {
   search: icon('<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.4-4.4"/>'),
   locate: icon('<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/>'),
   go: icon('<path d="M5 12h14M13 6l6 6-6 6"/>', "ico btn__go"),
   chev: icon('<path d="M6 9l6 6 6-6"/>'),
-  entry: icon(ARROW_IN, "ico plan__entry"),
-  entryKey: icon(ARROW_IN),
   plus: icon('<path d="M12 6v12M6 12h12"/>'),
   minus: icon('<path d="M6 12h12"/>'),
   info: icon('<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5"/><circle cx="12" cy="7.8" r="0.6" fill="currentColor"/>'),
@@ -54,13 +51,15 @@ const CHIP_ICONS = {
   stale: '<circle cx="6" cy="6" r="5.6" fill="currentColor"/><path class="hands" d="M6 3.3V6l1.9 1.2" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
   none: '<circle cx="6" cy="6" r="5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4.6 4.7a1.45 1.45 0 1 1 2 1.35c-.42.18-.6.5-.6.95" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="6" cy="8.7" r="0.75" fill="currentColor"/>',
   real: '<path d="M1.2 3.6h2l.9-1.4h3.8l.9 1.4h2v6.2H1.2z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><circle cx="6" cy="6.6" r="1.7" fill="none" stroke="currentColor" stroke-width="1.2"/>',
+  camoff: '<path d="M1.2 3.6h2l.9-1.4h3.8l.9 1.4h2v6.2H1.2z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><circle cx="6" cy="6.6" r="1.7" fill="none" stroke="currentColor" stroke-width="1.2"/>',
 };
 const chip = (kind, label) => `<span class="chip chip--${kind}"><svg class="chip__i" viewBox="0 0 12 12" aria-hidden="true">${CHIP_ICONS[kind]}</svg>${esc(label)}</span>`;
 const REAL_CHIP = chip("real", "Real camera");
-const cameraMark = (cls) => `<svg class="${cls}" viewBox="0 0 12 12" aria-hidden="true">${CHIP_ICONS.real}</svg>`;
+const OFF_CHIP = chip("camoff", "Camera offline");
 let anyDemo = false; // "Real camera" only means something next to demo racks
 
 function sourceChip(rack) {
+  if (rack.tracking === false) return OFF_CHIP; // the vision service has no picture: its spaces are drawn grey
   return !rack.demo && anyDemo ? REAL_CHIP : "";
 }
 
@@ -88,26 +87,28 @@ function chipFor(rack) {
   return ["none", "No data"];
 }
 
+/* Live spaces to show: a rack whose camera has no picture (tracking false) counts as full, but is drawn grey */
+const tracked = (rack) => rack.status === "ok" && rack.tracking !== false;
+
 /* Rack plan as a grid of cells: one grid row per rack row with an aisle between rows, each space at its place
-   from the layout, the entrance arrow on its end. Without a layout the spaces simply wrap. */
+   from the layout. Without a layout the spaces simply wrap. */
 function planHtml(rack, changed = [], small = false) {
-  const live = rack.status === "ok";
+  const live = tracked(rack);
   const { layout } = rack;
   const seen = new Map(rack.slots.map((s, i) => [s.id, [s.state, changed[i]]]));
   const spaces = layout ? layout.spaces : Array.from({ length: rack.capacity }, (_, i) => ({ id: i + 1 }));
   const cells = spaces.map((s) => {
     const [state, flipped] = (live && seen.get(s.id)) || ["unknown", false];
     const place = layout ? ` style="grid-area: ${2 * Math.round(s.y) + 1} / ${Math.round(s.x) + 1} / span ${2 * Math.round(s.h) - 1} / span ${Math.round(s.w)}"` : "";
-    return `<span class="cell cell--${state}${flipped ? " is-changed" : ""}"${place} title="Space ${s.id}: ${state}"><span>${s.id}</span></span>`;
+    return `<span class="cell cell--${state}${flipped ? " is-changed" : ""}"${place} title="Space ${s.id}: ${state === "unknown" ? "not tracked live" : state}"><span>${s.id}</span></span>`;
   });
   const rows = layout ? Math.ceil(layout.height) : 0;
   for (let y = 0; y < rows - 1; y++) {
-    cells.push(`<span class="plan__aisle" style="grid-row: ${2 * y + 2}">${y === Math.floor((rows - 2) / 2) ? '<span class="plan__door"></span>' : ""}</span>`);
+    cells.push(`<span class="plan__aisle" style="grid-row: ${2 * y + 2}"></span>`);
   }
   const cols = layout ? Math.ceil(layout.width) : Math.min(spaces.length, 12);
-  const wrap = `plan-wrap${small ? " plan-wrap--sm" : ""}${!layout ? " plan-wrap--free" : layout.entrance === "start" ? " plan-wrap--start" : ""}`;
-  const label = live ? `${rack.free} of ${rack.capacity} spaces free` : "Rack plan, no live data";
-  return `<div class="${wrap}" role="img" aria-label="${label}"><div class="plan${small ? " plan--sm" : ""}${cols > 10 ? " plan--dense" : ""}" style="grid-template-columns: repeat(${cols}, minmax(0, 1fr))">${cells.join("")}</div>${layout ? ICONS.entry : ""}</div>`;
+  const label = live ? `${rack.free} of ${rack.capacity} spaces free` : "Bike parking plan, not tracked live";
+  return `<div class="plan-wrap" role="img" aria-label="${label}"><div class="plan${small ? " plan--sm" : ""}${cols > 10 ? " plan--dense" : ""}" style="grid-template-columns: repeat(${cols}, minmax(0, 1fr))">${cells.join("")}</div></div>`;
 }
 
 /* Space numbers only where they fit, measured on the drawn plan: every space, else 1 and every 5th, else the first
@@ -145,28 +146,27 @@ function freeSpacesText(rack) {
   return `Free spaces: <b>${runs.map(([a, b]) => (a === b ? `${a}` : b === a + 1 ? `${a}, ${b}` : `${a} to ${b}`)).join(", ")}</b>`;
 }
 
-const PLAN_KEY = `<div class="plan-key" aria-hidden="true"><span class="plan-key__i"><span class="cell cell--free"></span>Free</span><span class="plan-key__i"><span class="cell cell--taken"></span>Taken</span>`;
-
-const ENTRANCE_KEY = `<span class="plan-key__i">${ICONS.entryKey}Entrance</span>`;
+const keyItem = (state, label) => `<span class="plan-key__i"><span class="cell cell--${state}"></span>${label}</span>`;
+const planKey = (grey) => `<div class="plan-key" aria-hidden="true">${keyItem("free", "Free")}${keyItem("taken", "Taken")}${grey ? keyItem("unknown", "Not tracked live") : ""}</div>`;
 
 /* A location's racks as stacked rows, each with its free count at the end */
 function partsHtml(rack, changed) {
   const rows = rack.parts.map((part, i) => {
-    const live = part.status === "ok";
-    return `<div class="part">${planHtml(part, changed[i])}<span class="part__n${live ? "" : " part__n--unknown"}">${!part.demo && anyDemo ? cameraMark("part__cam") : ""}${live ? part.free : "?"}</span></div>`;
+    const live = tracked(part);
+    return `<div class="part">${planHtml(part, changed[i])}<span class="part__n${live ? "" : " part__n--unknown"}">${live ? part.free : "?"}</span></div>`;
   });
-  return `<div class="parts">${rows.join("")}</div>${PLAN_KEY}${ENTRANCE_KEY}</div>`;
+  return `<div class="parts">${rows.join("")}</div>${planKey(!rack.parts.every(tracked))}`;
 }
 
 /* The open tile's body: the plan, the free spaces and the key (the predictions are added below by placeForecast) */
 function bodyHtml(rack, changed) {
   if (rack.parts) return partsHtml(rack, changed);
-  const live = rack.status === "ok";
+  const live = tracked(rack);
   const plan = rack.layout || (live && rack.slots.length) ? planHtml(rack, changed) : "";
   const line = live && rack.slots.length
     ? `<p class="plan-free">${freeSpacesText(rack)}</p>`
-    : `<p class="plan-free plan-free--quiet">${live ? "This rack reports a count only." : "No live data for the spaces right now."}</p>`;
-  const key = plan ? `${PLAN_KEY}${rack.layout ? ENTRANCE_KEY : ""}</div>` : "";
+    : `<p class="plan-free plan-free--quiet">${live ? "This bike parking reports a count only." : rack.tracking === false ? "Not tracked live right now." : "No live data for the spaces right now."}</p>`;
+  const key = plan ? planKey(!live) : "";
   return `${plan}${line}${key}`;
 }
 
@@ -343,7 +343,7 @@ function renderRacks(racks) {
     tiles.delete(id);
   });
   if (!racks.length) {
-    racksEl.innerHTML = '<li class="list-empty">No racks configured.</li>';
+    racksEl.innerHTML = '<li class="list-empty">No bike parkings configured.</li>';
     selectedId = null;
     return;
   }
@@ -545,9 +545,9 @@ function renderHero(racks) {
   const total = live.reduce((sum, r) => sum + r.free, 0);
   roll(value.firstElementChild, live.length ? total : "?");
   value.classList.toggle("is-quiet", !live.length || total === 0);
-  const where = live.length > 1 ? ` across ${live.length} racks` : live.length ? ` at ${live[0].name}` : "";
+  const where = live.length > 1 ? ` across ${live.length} bike parkings` : live.length ? ` at ${live[0].name}` : "";
   const text = !live.length
-    ? `No live data yet. ${racks.length} rack${racks.length === 1 ? "" : "s"} configured.`
+    ? `No live data yet. ${racks.length} bike parking${racks.length === 1 ? "" : "s"} configured.`
     : total === 0 ? "No free spaces right now" : `free space${total === 1 ? "" : "s"}${where}`;
   if (label.textContent !== text) label.textContent = text;
   const top = live.length ? live.reduce((a, b) => (b.free > a.free ? b : a)) : null;
@@ -590,7 +590,7 @@ function pinHtml(rack, level, enter = -1) {
   const state = !live ? " pin--none" : rack.free === 0 ? " pin--full" : "";
   const word = level !== "dot" && live ? '<span class="pin__l">free</span>' : "";
   const tip = `${rack.name}${real ? ", real camera" : ""}`;
-  return `<span class="pin${state}${selected}${entering}">${real ? cameraMark("pin__cam") : ""}<span class="pin__n">${live ? rack.free : "?"}</span>${word}</span><span class="pin-tip">${esc(tip)}</span>`;
+  return `<span class="pin${state}${selected}${entering}"><span class="pin__n">${live ? rack.free : "?"}</span>${word}</span><span class="pin-tip">${esc(tip)}</span>`;
 }
 
 /* A location's racks on its map card: one segment per rack, as wide as its share of the spaces, with its free count */
@@ -607,7 +607,6 @@ function segmentsHtml(rack) {
    Where a space would be a smudge only the rack's outline is drawn. A refresh only changes classes. */
 const PLAN_ZOOM = 17;
 const SPACE_MIN_PX = 3; // a 0.7 m space passes this from zoom 19, where a pin click lands
-const ENTRANCE_M = [0.3, 2.3]; // tip and tail of the entrance arrow, off the end of the rack
 const plans = new Map();
 
 function flyToRack(rack, zoom) {
@@ -621,7 +620,7 @@ function metresPerPx(lat, zoom) {
 }
 
 function planGeometry(rack) {
-  const { spaces, width, height, bearing, entrance, space_m: [along, depth], row_gap_m: gap } = rack.layout;
+  const { spaces, width, height, bearing, space_m: [along, depth], row_gap_m: gap } = rack.layout;
   const rad = (bearing * Math.PI) / 180;
   const deg = 180 / Math.PI;
   const pitch = depth + gap;
@@ -637,15 +636,9 @@ function planGeometry(rack) {
     return [lat + (north / EARTH_M) * deg, lng + (east / (EARTH_M * Math.cos(lat / deg))) * deg];
   };
   const box = (u0, v0, u1, v1) => [at(u0, v0), at(u1, v0), at(u1, v1), at(u0, v1)];
-  const atStart = entrance === "start";
-  const out = atStart ? -1 : 1; // the arrow sits off the entrance end and points into the rack
-  const [tip, tail] = ENTRANCE_M.map((m) => (atStart ? 0 : length) + out * m);
-  const barb = tip + out * 0.5;
-  const mid = across / 2;
   return {
     outline: box(0, 0, length, across),
     spaces: spaces.map((s) => [s.id, box(s.x * along, s.y * pitch, (s.x + s.w) * along, (s.y + s.h) * pitch - gap)]),
-    entrance: [[at(tail, mid), at(tip, mid)], [at(barb, mid - 0.45), at(tip, mid), at(barb, mid + 0.45)]],
   };
 }
 
@@ -654,12 +647,11 @@ function planFor(rack) {
     const geo = planGeometry(rack);
     const shape = (ring, className) => L.polygon(ring, { className, interactive: false });
     const spaces = new Map(geo.spaces.map(([id, ring]) => [id, shape(ring, "plan-space")]));
-    const entrance = L.polyline(geo.entrance, { className: "plan-entrance", interactive: false });
     plans.set(rack.id, {
-      points: [...geo.outline, ...geo.entrance.flat()],
+      points: geo.outline,
       outline: shape(geo.outline, "plan-outline"),
       spaces,
-      detail: L.layerGroup([...spaces.values(), entrance]),
+      detail: L.layerGroup([...spaces.values()]),
       mode: "",
     });
   }
@@ -684,7 +676,7 @@ function ensureHatch() {
 /* Draws the rack's plan for this zoom and returns its box in map pixels, or null when it is not drawn */
 function updatePlan(rack, zoom) {
   const plan = planFor(rack);
-  const live = rack.status === "ok";
+  const live = tracked(rack);
   const seen = new Map(rack.slots.map((s) => [s.id, s.state]));
   plan.spaces.forEach((layer, id) => setClass(layer, `plan-space plan-space-${(live && seen.get(id)) || "unknown"}`));
   setClass(plan.outline, `plan-outline plan-outline-${!live ? "unknown" : rack.free === 0 ? "full" : "ok"}`);
@@ -916,7 +908,7 @@ function answer() {
   if (!pick) {
     route[0].addTo(map);
     destRackId = null;
-    say("No rack with a known place has a free space right now.");
+    say("No bike parking with a known place has a free space right now.");
     renderMeta(); // the tiles show each rack's distance
     return;
   }
@@ -924,7 +916,7 @@ function answer() {
   const minutes = Math.max(1, Math.ceil(metres / (bike ? BIKE_M_PER_MIN : WALK_M_PER_MIN)));
   const reply = `${rack.name}: ${rack.free} free, about ${minutes} min ${bike ? "by bike" : "walk"}`;
   const [closest, nearestM] = placed[0];
-  const far = nearestM > FAR_M ? `. ${dest.name || "This place"} is ${distanceText(nearestM)} from the nearest rack` : "";
+  const far = nearestM > FAR_M ? `. ${dest.name || "This place"} is ${distanceText(nearestM)} from the nearest bike parking` : "";
   say((closest === rack ? reply : `${closest.name} ${closest.status === "ok" ? "is full" : "has no live data"}, next: ${reply}`) + far);
   const from = [at.lat, at.lng];
   const middle = [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2];
