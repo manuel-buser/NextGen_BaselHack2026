@@ -8,6 +8,7 @@
 // Board: Seeed XIAO ESP32S3 Sense (OV2640 / OV3660), ESP-IDF >= 5.3, ESP-DL pedestrian_detect.
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -15,8 +16,11 @@
 #include <memory>
 #include <vector>
 
+#include "driver/temperature_sensor.h"
 #include "esp_camera.h"
 #include "esp_event.h"
+#include "esp_heap_caps.h"
+#include "esp_system.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -658,13 +662,22 @@ static ShotPtr s_latest;
 static int64_t s_latest_us = 0;
 static volatile int64_t s_last_view_us = 0;
 
+// Counters for GET /health (updated from the live task and the HTTP server task)
+static std::atomic<uint32_t> s_shots_taken{0};    // pictures captured + blurred + encoded
+static std::atomic<uint32_t> s_shots_failed{0};   // capture or JPEG encode failed
+static std::atomic<uint32_t> s_shots_served{0};   // pictures sent on GET /snapshot
+
 static ShotPtr new_shot()
 {
     ShotPtr sh(new Shot(), [](Shot *p) {
         free(p->jpg);
         delete p;
     });
-    if (!take_shot(*sh)) return nullptr;
+    if (!take_shot(*sh)) {
+        s_shots_failed++;
+        return nullptr;
+    }
+    s_shots_taken++;
     xSemaphoreTake(s_latest_lock, portMAX_DELAY);
     s_latest = sh;
     s_latest_us = esp_timer_get_time();
@@ -732,7 +745,90 @@ static esp_err_t capture_handler(httpd_req_t *req)
         snprintf(tune, sizeof(tune), "off");
     }
     httpd_resp_set_hdr(req, "X-Autotune", tune);
-    return httpd_resp_send(req, reinterpret_cast<const char *>(s.jpg), s.len);
+    const esp_err_t res = httpd_resp_send(req, reinterpret_cast<const char *>(s.jpg), s.len);
+    if (res == ESP_OK) s_shots_served++;
+    return res;
+}
+
+// ---- health: GET /health ----
+
+static temperature_sensor_handle_t s_tsens = nullptr;
+
+static void health_start()
+{
+    temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
+    if (temperature_sensor_install(&cfg, &s_tsens) != ESP_OK || temperature_sensor_enable(s_tsens) != ESP_OK) {
+        ESP_LOGW(TAG, "temperature sensor not available");
+        s_tsens = nullptr;
+    }
+}
+
+static const char *reset_reason_name(esp_reset_reason_t r)
+{
+    switch (r) {
+    case ESP_RST_POWERON: return "power_on";
+    case ESP_RST_SW: return "software";
+    case ESP_RST_PANIC: return "panic";
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT: return "watchdog";
+    case ESP_RST_BROWNOUT: return "brownout";
+    case ESP_RST_USB: return "usb";
+    case ESP_RST_DEEPSLEEP: return "deep_sleep";
+    default: return "other";
+    }
+}
+
+static esp_err_t health_handler(httpd_req_t *req)
+{
+    const int64_t now = esp_timer_get_time();
+
+    char temp[16] = "null";
+    float celsius;
+    if (s_tsens && temperature_sensor_get_celsius(s_tsens, &celsius) == ESP_OK) {
+        snprintf(temp, sizeof(temp), "%.1f", celsius);
+    }
+
+    xSemaphoreTake(s_latest_lock, portMAX_DELAY);
+    const ShotPtr last = s_latest;
+    const int64_t last_us = s_latest_us;
+    xSemaphoreGive(s_latest_lock);
+    char last_age[16] = "null";
+    if (last) snprintf(last_age, sizeof(last_age), "%lld", (now - last_us) / 1000000);
+
+    const bool connected = xEventGroupGetBits(s_wifi_events) & WIFI_CONNECTED;
+    wifi_ap_record_t ap = {};
+    const bool have_ap = connected && esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
+    char rssi[8] = "null", channel[8] = "null";
+    if (have_ap) {
+        snprintf(rssi, sizeof(rssi), "%d", ap.rssi);
+        snprintf(channel, sizeof(channel), "%d", ap.primary);
+    }
+
+    char json[768];
+    snprintf(json, sizeof(json),
+             "{\"uptime_s\":%lld,\"reset_reason\":\"%s\",\"temperature_c\":%s,"
+             "\"snapshots_taken\":%lu,\"snapshots_failed\":%lu,\"snapshots_served\":%lu,"
+             "\"last_snapshot_age_s\":%s,\"last_detect_ms\":%lld,\"last_people\":%d,\"last_plates\":%d,"
+             "\"heap_free\":%u,\"heap_min_free\":%u,\"heap_largest_block\":%u,"
+             "\"psram_free\":%u,\"psram_total\":%u,"
+             "\"wifi_connected\":%s,\"wifi_ssid\":\"%s\",\"wifi_rssi_dbm\":%s,\"wifi_channel\":%s,"
+             "\"ip\":\"" IPSTR "\",\"autotune\":%s}",
+             now / 1000000, reset_reason_name(esp_reset_reason()), temp,
+             (unsigned long)s_shots_taken.load(), (unsigned long)s_shots_failed.load(),
+             (unsigned long)s_shots_served.load(), last_age, last ? last->detect_ms : 0LL,
+             last ? last->people : 0, last ? last->plates : 0,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+             (unsigned)heap_caps_get_total_size(MALLOC_CAP_SPIRAM),
+             connected ? "true" : "false", s_nets[s_net].ssid, rssi, channel, IP2STR(&s_ip),
+             autotune::enabled ? "true" : "false");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    return httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
 }
 
 // ---- camera settings: same interface as Espressif's CameraWebServer (/status, /control) ----
@@ -842,6 +938,8 @@ static void web_start()
     const httpd_uri_t control = {.uri = "/control", .method = HTTP_GET, .handler = control_handler, .user_ctx = nullptr};
     httpd_register_uri_handler(server, &status);
     httpd_register_uri_handler(server, &control);
+    const httpd_uri_t health = {.uri = "/health", .method = HTTP_GET, .handler = health_handler, .user_ctx = nullptr};
+    httpd_register_uri_handler(server, &health);
 }
 
 // ---------------------------------------------------------------- main
@@ -857,6 +955,7 @@ extern "C" void app_main(void)
 
     s_cam_lock = xSemaphoreCreateMutex();
     s_latest_lock = xSemaphoreCreateMutex();
+    health_start();
     if (!camera_start()) {
         vTaskDelay(pdMS_TO_TICKS(5000));
         esp_restart();
