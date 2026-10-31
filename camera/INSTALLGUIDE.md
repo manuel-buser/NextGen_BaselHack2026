@@ -102,7 +102,8 @@ Your computer must be on the same Wi-Fi as the camera. Replace the IP with the o
 |---|---|
 | `http://<camera-ip>/` | Live view for aiming the camera (about 1 picture per second) |
 | `http://<camera-ip>/snapshot` | One JPEG, people and plates already blurred |
-| `http://<camera-ip>/status` | Camera status |
+| `http://<camera-ip>/status` | Camera image settings (JSON) |
+| `http://<camera-ip>/health` | Health check: uptime, temperature, snapshot counters, heap/PSRAM, Wi-Fi signal (JSON) |
 | `http://<camera-ip>/control` | Change settings at runtime |
 
 ```bash
