@@ -5,7 +5,6 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from .detector_client import DetectorError, fake_result
-from .history import parse_clock
 from .state import Rack
 
 NODE_INTS = (
@@ -15,9 +14,7 @@ NODE_INTS = (
 
 
 def node_report(payload: dict, hot_limit_c: float) -> dict:
-    """Normalise what a node says about itself into Camera field names. Understands the node's status JSON
-    (temperature_c, too_hot, uptime_s, WiFi and memory figures) and the push contract (tempC, tooHot, uptimeS).
-    Without a too_hot flag the app compares the temperature with the hot limit and marks the result as derived."""
+    """Normalise the node's status JSON or the push contract keys (tempC, tooHot, uptimeS) into Camera field names."""
     report: dict = {}
     temp = payload.get("temperature_c", payload.get("tempC"))
     if temp is not None:
@@ -45,16 +42,12 @@ def ingest_alive(app: FastAPI, rack: Rack, payload: dict, node_id: str | None, n
     app.state.store.note_alive(rack, node_report(payload, app.state.settings.hot_limit_c), node_id, now, source)
 
 
-async def ingest_picture(
-    app: FastAPI, rack: Rack, image: bytes, node_id: str | None, now: float, source: str, demo_clock: str | None = None
-) -> tuple[dict, int]:
-    """Run one picture through the detector (the stand-in for demo racks) and then the rules. Returns the reply
-    body and HTTP status the push endpoint answers with; the poller has nobody to answer and drops them.
-    `demo_clock` is the demo driver's simulated time (X-Demo-Clock); only a demo rack uses it."""
+async def ingest_picture(app: FastAPI, rack: Rack, image: bytes, node_id: str | None, now: float, source: str) -> tuple[dict, int]:
+    """Returns the push endpoint's reply body and HTTP status; the poller ignores them."""
     store = app.state.store
     store.note_picture(rack, len(image), node_id, now, source)
     try:
-        if rack.demo:  # made-up pictures are decided by the stand-in, the real detector never sees them
+        if rack.demo:  # the real detector never sees made-up pictures
             result, latency_ms = fake_result(rack.id, rack.capacity, image), 0.0
         else:
             result, latency_ms = await app.state.detector.analyze(rack.id, rack.capacity, image)
@@ -64,9 +57,9 @@ async def ingest_picture(
     finally:
         del image  # not kept beyond this request
     try:
-        store.apply_detection(rack, result, latency_ms, now, parse_clock(demo_clock) if rack.demo else None)
+        store.apply_detection(rack, result, latency_ms, now)
     except (KeyError, TypeError, ValueError) as exc:
         store.note_detector_error(f"bad detector result: {exc}", now)
         return {"ok": False, "error": "bad detector result"}, 502
-    # not rack_view: its forecast is not needed here and would be worked out again for every picture
+    # not rack_view: that would recompute the forecast for every picture
     return {"ok": True, "rack": rack.id, "free": rack.free, "capacity": rack.capacity, "status": rack.status(store.settings, now)}, 200
