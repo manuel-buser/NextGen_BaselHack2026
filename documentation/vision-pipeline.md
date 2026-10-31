@@ -16,7 +16,7 @@ Two stages per camera:
 
 | Stage | When | What |
 |---|---|---|
-| **A – calibration** (`calibrate.py`, `stands.py`, `vlm.py`, `lines.py`) | once per camera, admin-triggered | Proposes the slot layout: how many slots, in which order, where in the image. Evidence: **rack stands** found by YOLOE visual prompting (one example stand found by text prompt, then all look-alikes; hidden stands inferred from the spacing), **parked bikes** (wheel contact points: row split, front edge, end slots), a **GPT-vision set-of-mark answer** (numbered boxes on the bikes; parking type, enumerated slots, "bike k is in slot j", only used when consistent with the bike spacing) and painted dividers as an extra count. Several rows are supported. The admin then confirms or corrects the result. |
+| **A – calibration** (`calibrate.py`, `lattice.py`, `stands.py`, `vlm.py`, `lines.py`) | once per camera, admin-triggered | Proposes the slot layout: how many slots, in which order, where in the image. Evidence: **rack stands** found by YOLOE visual prompting (one example stand found by text prompt, then all look-alikes), **parked bikes** (mask contact point and centroid: row split, slot depth, which side of the rack is used, extra end slots), **painted dividers** and a **GPT-vision set-of-mark answer** (parking type, enumerated slots). Per row a **1-D projective lattice** (equally spaced slots seen in perspective) is fitted to the stands, dividers and bikes: it places the stands hidden behind bikes, puts the slot boundaries at perspective-correct positions and decides whether an end bike occupies an extra slot or just leans. Several rows and racks used from both sides are supported. The admin then confirms or corrects the result. |
 | **B – occupancy** (`detector.py`, `occupancy.py`) | every snapshot, fully local | YOLO11x-seg finds bicycles / motorcycles / persons. Each vehicle's **ground-contact point** (lowest pixels of its mask ≈ rear wheel) and its footprint are matched against the slot polygons. One vehicle fills at most one slot. Votes are smoothed over the last 5 frames with hysteresis. |
 
 ### Why this design
@@ -27,6 +27,14 @@ Two stages per camera:
 * **Row model**: a layout is a front line + back line + slot count. The admin drags 4 corners and sets N
   instead of drawing N polygons. Slots are split equally *on the ground* (homography), so perspective is
   respected. Explicit polygons are stored too and can be edited individually.
+* **Projective lattice instead of a pixel pitch** (`lattice.py`): along a row seen in perspective the
+  stand spacing is not constant, it shrinks towards the horizon as `u(n) = (a·n + b) / (c·n + 1)`.
+  Comparing a gap at the far end with the median pitch confuses perspective with "a stand is hidden here"
+  (that is where the old 8-or-11-instead-of-9 came from). Fitting the three parameters with an
+  integer-gap RANSAC makes every slot exactly 1.0 wide in lattice units: hidden stands sit at the missing
+  integers, bikes leaning out of the last slot stay below index N, bikes in a hidden end slot land at
+  index N. Stands, painted dividers and bikes each propose a lattice; the one that explains most of the
+  evidence wins (on the golden scene that is the painted bays - its stands are drawn off-centre).
 * **Snapshots instead of a video stream**: parking state changes slowly, stills have more pixels, less WiFi
   load, fewer frames ever touch the laptop.
 * **count_only mode** for dense double racks where per-slot assignment is meaningless: reports an estimated
@@ -39,38 +47,44 @@ Two stages per camera:
 | Per-slot occupancy with the golden layout (3 images × 9 slots) | **27 / 27** |
 | Detector latency, 1280 px, RTX 4070 laptop, fp16 | ~80 ms detect, ~100 ms whole frame |
 | Auto layout, row model with the true corners and N | mean IoU 0.85 vs hand-labelled bays |
-| Auto layout straight from calibration (bikes + VLM) | slot count 8 of 9, front line correct, back line needs the admin to drag one corner; after setting N and the corner: 27/27 |
+| Auto layout straight from calibration, 3 frames, no VLM, no admin | **9 slots, 27/27**, mean IoU 0.74 vs the hand-labelled bays |
 
-### Automatic calibration benchmark (2026-10-31, `scratchpad/calib_bench.py`)
+### Automatic calibration benchmark (2026-10-31, `code/scripts/calib_bench.py --vlm 0`)
 
 Occupancy = per-slot states of the proposal applied to the same images, *without any admin correction*.
-Golden truth is 9 slots; the ChatGPT images have no labels, so "bikes" is the detector count.
+Golden truth is 9 slots; the ChatGPT images have no labels, so "placed" = bikes that got a slot of their
+own (slots occupied / bikes detected). "Before" is the previous pixel-pitch heuristic (same day, same images).
 
-| Scene | Stands found | Proposed N | Occupancy with the raw proposal |
+| Scene | Stands found | Proposed N (before → now) | Raw proposal (before → now) |
 |---|---|---|---|
-| golden, 3 frames with different occupancy, no VLM | 7 + 2 inferred | 11 (9 + 2 phantom end slots) | 17 / 27 |
-| golden, 3 frames, with VLM | 7 + 2 inferred | 8 | 10 / 27 |
-| golden, single frame | 5 + 1 inferred | 6–10 | 11–16 / 27 |
-| gpt_01 (2 rows, painted bays) | 8 | 18–19 (15 bikes) | 14 of 15 bikes placed |
-| gpt_02 (2 dense diagonal rows) | none | 22 (25 bikes) | 11 of 25 |
-| gpt_03 (2 full rows) | none | 19 (19 bikes) | 19 of 19 |
-| gpt_04 (stirrups used from both sides, diagonal) | 5 + 2 | 11 (8 bikes) | 5 of 8 |
-| gpt_05 (2 full rows) | none | 18 (20 bikes) | 16 of 20 |
-| gpt_06 (2 rows, 34 bikes) | none | 31 | 24 of 34 |
-| gpt_07 (2 diagonal rows, painted bays) | 5 | 14 (14 bikes) | 3 of 14 |
+| golden, 3 frames with different occupancy | 7 of 10 drawn | 11 → **9** | 17/27 → **27/27** |
+| golden, single frame 001 / 002 / 003 | 5 | 10 / - / 8 → 9 / 9 / 10 | 16 / - / 11 of 27 → 17 / 23 / 16 of 27 |
+| gpt_01 (2 rows, painted bays, overhead) | 8 | 19 → **23** (= 11 + 12 bays) | 14/15 → **15/15** |
+| gpt_02 (2 dense diagonal rows) | none | 22 → 23 | 11/25 → 16/25 |
+| gpt_03 (2 full rows) | none | 19 → 19 | 19/19 → 19/19 |
+| gpt_04 (stirrups, diagonal, one bike behind the rack) | 5 | 11 → 12 | 5/8 → 7/8 |
+| gpt_05 (2 rows of wheel holders, a few empty) | 4 | 18 → 22 | 14/20 → **19/20** |
+| gpt_06 (2 dense rows, 34 bikes) | none | 31 → 31 | 24/34 → 29/34 |
+| gpt_07 (2 diagonal rows, painted bays) | 5 | 19 → 19 (= 8 + 11 bays) | 1/14 → **14/14** |
 
 What this means in practice:
-* **Full or nearly full rows calibrate themselves** (gpt_03, gpt_05): every bike is a slot, the rows are found,
-  the admin only presses confirm.
-* **Stands are the strongest signal for partially used racks** (golden: 9 of 9 stirrups with three frames of
-  varied occupancy). Calibrate after the camera has seen a few different occupancy states.
-* **Where it still needs the admin**: end slots whose stand is hidden and whose bike leans away from the
-  stand (golden gives 8 or 11 instead of 9), the depth of a far second row (gpt_07), and racks used from both
-  sides (gpt_04). Those are a slot count and one corner drag in the admin editor.
+* **The golden scene calibrates itself** with three frames of different occupancy: the painted bays form
+  the lattice, the bikes extend it to the wall, the two stirrups-in-one-bay quirks are outliers. The polygons'
+  back edge runs through the far ends of the bikes (slightly above the painted back line), which is why the
+  IoU is 0.74 and not higher; the occupancy is unaffected.
+* **Calibrate after a few frames with different occupancy.** A single golden frame still gives 9-10 slots
+  with the right pitch but can be one slot off at an end; the admin fixes that with one click.
+* **Rows with stands or painted bays** (gpt_01, gpt_05, gpt_07) now get the empty slots between the bikes
+  right, including the far rows of diagonal scenes.
+* **Where it still needs the admin**: very dense double racks (gpt_02, gpt_06: bikes overlap, the detector
+  merges some, per-slot assignment is a guess - `count_only` mode is the honest answer there), and
+  hand-drawn irregular racks (gpt_04's stirrups are not evenly spaced in the AI image: the count is right,
+  two bikes share a slot).
 * GPT-4.1's "bike k is in slot j" answers are wrong more often than right on these scenes (it tends to
-  number the bikes 1..k); the consistency check rejects them in that case so they cannot do harm.
-  Its enumerated slot count is a useful tie-breaker and its parking type / numbering direction are kept.
-* Painted-line detection (`lines.py`) is experimental and only used as an additional count estimate.
+  number the bikes 1..k); the consistency check rejects them in that case so they cannot do harm. The
+  lattice count overrides the VLM count whenever at least 3 stands or 4 dividers lie on the lattice.
+* Tried and dropped: a second YOLOE pass with 2-3 exemplar stands as a multi-box visual prompt found
+  exactly the same stands on every scene; the inferred positions from the lattice are what matter.
 
 Flags: `POST /cameras/{id}/calibrate?use_stands=true&use_vlm=true`. The stand model (`yoloe-11l-seg.pt`,
 downloaded on first use together with its text encoder) is warmed up in the background at service start;
@@ -86,12 +100,19 @@ the first calibration can take ~30 s if it is not ready yet, later ones take 1�
 # service (the golden layout is loaded for cam01 automatically)
 .venv/Scripts/python -m uvicorn --app-dir code bikeslot.api:app --host 0.0.0.0 --port 8000
 # docs: http://127.0.0.1:8000/docs   debug view: http://127.0.0.1:8000/
+# showcase: http://127.0.0.1:8000/demo  (live camera + annotated golden and auto-calibrated examples)
+
+# live camera: the service polls http://192.168.21.95/snapshot itself as camera live01 (pull mode).
+# Change/disable with BIKESLOT_PULL_CAMERAS="live01=http://<ip>/snapshot,cam02=http://<ip2>/snapshot" (or "")
+# and BIKESLOT_PULL_INTERVAL=5, or at runtime: PUT /cameras/live01/source?url=http://<ip>/snapshot
+# pull state (frames, errors, last fetch) is in GET /health under "pull".
 
 # fake camera: loop the golden images into cam01 every 3 s
 .venv/Scripts/python code/scripts/replay.py --camera cam01 --source assets/pictures/GoldenDataSet --interval 3 --loop
 
 # evaluation and tests
 .venv/Scripts/python code/scripts/eval_golden.py --previews data/preview/eval
+.venv/Scripts/python code/scripts/calib_bench.py --vlm 0        # automatic calibration on all scenes (table above)
 cd code && ../.venv/Scripts/python -m pytest tests -q
 ```
 
@@ -160,6 +181,8 @@ let the admin drag the 4 row corners and change `slot_count`, then
 * Send **JPEG stills, not a stream**: ≥ 1280×960 (UXGA 1600×1200 works well), JPEG quality 10–12, every ~5 s.
 * `POST http://<laptop-ip>:8000/cameras/<camera_id>/frames` with header `Content-Type: image/jpeg` and the
   JPEG bytes as body. The answer is the current occupancy JSON.
+* Alternative (current setup): the camera serves `GET http://<esp-ip>/snapshot` (JPEG) and the service pulls
+  it itself, see `BIKESLOT_PULL_CAMERAS` above - no push code needed on the ESP32.
 * Fallback: keep the stock CameraWebServer `/capture` endpoint and run
   `replay.py --camera cam01 --source http://<esp-ip>/capture --interval 5 --loop` on the laptop.
 * Mount the camera high, looking along the row, fixed after calibration. Open Windows Firewall port 8000.
