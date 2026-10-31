@@ -81,6 +81,10 @@ OFFLINE_AFTER_S = _env("OFFLINE_AFTER_S", 60.0)
 RING_BUFFER = _env("RING_BUFFER", 10)           # raw frames kept in RAM per camera (calibration)
 
 # --- calibration -------------------------------------------------------------
+STAND_MODEL = _env("STAND_MODEL", "yoloe-11l-seg.pt")   # open-vocabulary model for rack stands (calibration only)
+STAND_CONF = _env("STAND_CONF", 0.3)                    # visual-prompt confidence to accept a stand
+STAND_EXEMPLAR_MIN_CONF = _env("STAND_EXEMPLAR_MIN_CONF", 0.15)  # text-prompt confidence needed for the exemplar
+SLOT_DEPTH_PER_STAND_HEIGHT = _env("SLOT_DEPTH_PER_STAND_HEIGHT", 3.0)  # slot depth when no bike gives the front line
 CLUSTER_GAP_FRAC = _env("CLUSTER_GAP_FRAC", 0.5)   # new slot cluster when gap > frac * median box width
 MAX_SLOTS = _env("MAX_SLOTS", 60)
 

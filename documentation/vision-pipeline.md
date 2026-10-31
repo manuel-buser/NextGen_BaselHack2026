@@ -16,7 +16,7 @@ Two stages per camera:
 
 | Stage | When | What |
 |---|---|---|
-| **A – calibration** (`calibrate.py`, `vlm.py`, `lines.py`) | once per camera, admin-triggered | Proposes the slot layout: how many slots, in which order, where in the image. Uses bikes seen in the last frames (clusters of wheel contact points), a GPT-vision hint (parking type, enumerated slots, numbering direction, rough row corners) and, as an extra estimate, painted divider lines. The admin then confirms or edits the result. |
+| **A – calibration** (`calibrate.py`, `stands.py`, `vlm.py`, `lines.py`) | once per camera, admin-triggered | Proposes the slot layout: how many slots, in which order, where in the image. Evidence: **rack stands** found by YOLOE visual prompting (one example stand found by text prompt, then all look-alikes; hidden stands inferred from the spacing), **parked bikes** (wheel contact points: row split, front edge, end slots), a **GPT-vision set-of-mark answer** (numbered boxes on the bikes; parking type, enumerated slots, "bike k is in slot j", only used when consistent with the bike spacing) and painted dividers as an extra count. Several rows are supported. The admin then confirms or corrects the result. |
 | **B – occupancy** (`detector.py`, `occupancy.py`) | every snapshot, fully local | YOLO11x-seg finds bicycles / motorcycles / persons. Each vehicle's **ground-contact point** (lowest pixels of its mask ≈ rear wheel) and its footprint are matched against the slot polygons. One vehicle fills at most one slot. Votes are smoothed over the last 5 frames with hysteresis. |
 
 ### Why this design
@@ -41,10 +41,40 @@ Two stages per camera:
 | Auto layout, row model with the true corners and N | mean IoU 0.85 vs hand-labelled bays |
 | Auto layout straight from calibration (bikes + VLM) | slot count 8 of 9, front line correct, back line needs the admin to drag one corner; after setting N and the corner: 27/27 |
 
-Known limitation: slot counting from bikes alone under-counts when two bikes in neighbouring bays lean
-towards each other, and GPT-4.1 also tends to miss one bay in this scene. The admin step (set N, drag a
-corner) fixes this in seconds. Painted-line detection (`lines.py`) is experimental and only used as an
-additional count estimate.
+### Automatic calibration benchmark (2026-10-31, `scratchpad/calib_bench.py`)
+
+Occupancy = per-slot states of the proposal applied to the same images, *without any admin correction*.
+Golden truth is 9 slots; the ChatGPT images have no labels, so "bikes" is the detector count.
+
+| Scene | Stands found | Proposed N | Occupancy with the raw proposal |
+|---|---|---|---|
+| golden, 3 frames with different occupancy, no VLM | 7 + 2 inferred | 11 (9 + 2 phantom end slots) | 17 / 27 |
+| golden, 3 frames, with VLM | 7 + 2 inferred | 8 | 10 / 27 |
+| golden, single frame | 5 + 1 inferred | 6–10 | 11–16 / 27 |
+| gpt_01 (2 rows, painted bays) | 8 | 18–19 (15 bikes) | 14 of 15 bikes placed |
+| gpt_02 (2 dense diagonal rows) | none | 22 (25 bikes) | 11 of 25 |
+| gpt_03 (2 full rows) | none | 19 (19 bikes) | 19 of 19 |
+| gpt_04 (stirrups used from both sides, diagonal) | 5 + 2 | 11 (8 bikes) | 5 of 8 |
+| gpt_05 (2 full rows) | none | 18 (20 bikes) | 16 of 20 |
+| gpt_06 (2 rows, 34 bikes) | none | 31 | 24 of 34 |
+| gpt_07 (2 diagonal rows, painted bays) | 5 | 14 (14 bikes) | 3 of 14 |
+
+What this means in practice:
+* **Full or nearly full rows calibrate themselves** (gpt_03, gpt_05): every bike is a slot, the rows are found,
+  the admin only presses confirm.
+* **Stands are the strongest signal for partially used racks** (golden: 9 of 9 stirrups with three frames of
+  varied occupancy). Calibrate after the camera has seen a few different occupancy states.
+* **Where it still needs the admin**: end slots whose stand is hidden and whose bike leans away from the
+  stand (golden gives 8 or 11 instead of 9), the depth of a far second row (gpt_07), and racks used from both
+  sides (gpt_04). Those are a slot count and one corner drag in the admin editor.
+* GPT-4.1's "bike k is in slot j" answers are wrong more often than right on these scenes (it tends to
+  number the bikes 1..k); the consistency check rejects them in that case so they cannot do harm.
+  Its enumerated slot count is a useful tie-breaker and its parking type / numbering direction are kept.
+* Painted-line detection (`lines.py`) is experimental and only used as an additional count estimate.
+
+Flags: `POST /cameras/{id}/calibrate?use_stands=true&use_vlm=true`. The stand model (`yoloe-11l-seg.pt`,
+downloaded on first use together with its text encoder) is warmed up in the background at service start;
+the first calibration can take ~30 s if it is not ready yet, later ones take 1–5 s.
 
 ## Running
 

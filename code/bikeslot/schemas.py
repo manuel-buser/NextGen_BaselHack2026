@@ -54,6 +54,8 @@ class CalibrationHint(BaseModel):
         default=None, description="normalised back-left, back-right, front-right, front-left of the whole row")
     free_count: Optional[int] = None
     occupied_count: Optional[int] = None
+    mark_slots: Optional[dict[int, int]] = Field(default=None, description="set-of-mark answer: mark number -> slot index")
+    stand_count: Optional[int] = None
     notes: str = ""
 
 
@@ -69,6 +71,7 @@ class Layout(BaseModel):
     rows: list[Row] = []
     slots: list[Slot] = []
     calibration_hint: Optional[CalibrationHint] = None
+    anchors: list[Point] = Field(default=[], description="normalised ground points of detected/inferred stands (for the admin view)")
     params: dict = {}
     updated_at: datetime = Field(default_factory=utcnow)
 

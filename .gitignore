@@ -11,3 +11,6 @@ assets/pictures/EndressPictures/
 
 # API keys - never commit
 .env
+
+# YOLOE text encoder (downloaded by ultralytics)
+mobileclip*.ts
