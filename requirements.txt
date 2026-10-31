@@ -1,0 +1,18 @@
+# bikeslot service - install into the venv with:  .venv/Scripts/python -m pip install -r requirements.txt
+# torch/torchvision are NOT pinned here: install the CUDA build for your machine first, e.g.
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+# model weights (yolo11x-seg.pt) are downloaded automatically by ultralytics on first run.
+
+ultralytics==8.4.194
+opencv-python==5.0.0.93
+numpy==2.2.6
+pydantic==2.14.2
+fastapi==0.162.0
+uvicorn==0.54.0
+python-multipart==0.0.32
+python-dotenv==0.21.0
+shapely==2.2.0
+openai==1.63.2
+requests==2.32.3
+pytest==7.4.4
+httpx==0.28.1

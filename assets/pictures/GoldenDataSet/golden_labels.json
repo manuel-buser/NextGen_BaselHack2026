@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "description": "Golden data set: hand-labelled bicycle slot occupancy. Slots are numbered 1..N from left to right as seen from the camera. Polygons are the painted ground footprint of each bay in pixel coordinates [x, y] (origin top-left, order: back-left, back-right, front-right, front-left), accurate to roughly +-10 px. A slot counts as occupied when a bicycle's wheels stand inside its painted bay.",
+  "cameras": [
+    {
+      "camera_id": "cam01",
+      "location_id": "site01",
+      "location_name": "Bicycle parking site01 (example, AI-generated scene)",
+      "image_size": [1536, 1024],
+      "slot_count": 9,
+      "slots": [
+        {"slot_id": "cam01-S01", "index": 1, "polygon": [[200, 290], [305, 298], [205, 512], [65, 495]]},
+        {"slot_id": "cam01-S02", "index": 2, "polygon": [[305, 298], [425, 310], [338, 528], [205, 512]]},
+        {"slot_id": "cam01-S03", "index": 3, "polygon": [[425, 310], [555, 320], [473, 547], [338, 528]]},
+        {"slot_id": "cam01-S04", "index": 4, "polygon": [[555, 320], [690, 330], [625, 567], [473, 547]]},
+        {"slot_id": "cam01-S05", "index": 5, "polygon": [[690, 330], [835, 350], [795, 590], [625, 567]]},
+        {"slot_id": "cam01-S06", "index": 6, "polygon": [[835, 350], [1000, 330], [968, 612], [795, 590]]},
+        {"slot_id": "cam01-S07", "index": 7, "polygon": [[1000, 330], [1125, 385], [1120, 637], [968, 612]]},
+        {"slot_id": "cam01-S08", "index": 8, "polygon": [[1125, 385], [1310, 410], [1330, 665], [1120, 637]]},
+        {"slot_id": "cam01-S09", "index": 9, "polygon": [[1310, 410], [1480, 415], [1492, 695], [1330, 665]]}
+      ]
+    }
+  ],
+  "images": [
+    {
+      "file": "bikeparking_cam01_001.png",
+      "camera_id": "cam01",
+      "original_filename": "parking2_chatgpt.png",
+      "source": "ChatGPT-generated",
+      "slots": {
+        "cam01-S01": "occupied",
+        "cam01-S02": "free",
+        "cam01-S03": "free",
+        "cam01-S04": "occupied",
+        "cam01-S05": "occupied",
+        "cam01-S06": "occupied",
+        "cam01-S07": "free",
+        "cam01-S08": "occupied",
+        "cam01-S09": "occupied"
+      },
+      "occupied_count": 6,
+      "free_count": 3,
+      "notes": "S04: light-blue bike parked right against the S03/S04 line, wheels inside S04."
+    },
+    {
+      "file": "bikeparking_cam01_002.png",
+      "camera_id": "cam01",
+      "original_filename": "Fahrradparkplatz mit bunten Rädern.png",
+      "source": "ChatGPT-generated",
+      "slots": {
+        "cam01-S01": "occupied",
+        "cam01-S02": "occupied",
+        "cam01-S03": "free",
+        "cam01-S04": "free",
+        "cam01-S05": "occupied",
+        "cam01-S06": "occupied",
+        "cam01-S07": "free",
+        "cam01-S08": "occupied",
+        "cam01-S09": "occupied"
+      },
+      "occupied_count": 6,
+      "free_count": 3,
+      "notes": "S02: beige bike leans against the S02/S03 line, wheels inside S02."
+    },
+    {
+      "file": "bikeparking_cam01_003.png",
+      "camera_id": "cam01",
+      "original_filename": "Fahrradparkplatz mit bunten Fahrrädern.png",
+      "source": "ChatGPT-generated",
+      "slots": {
+        "cam01-S01": "occupied",
+        "cam01-S02": "free",
+        "cam01-S03": "occupied",
+        "cam01-S04": "free",
+        "cam01-S05": "occupied",
+        "cam01-S06": "occupied",
+        "cam01-S07": "occupied",
+        "cam01-S08": "free",
+        "cam01-S09": "occupied"
+      },
+      "occupied_count": 6,
+      "free_count": 3,
+      "notes": ""
+    }
+  ]
+}
