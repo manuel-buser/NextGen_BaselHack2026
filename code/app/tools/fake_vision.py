@@ -2,7 +2,7 @@
 or a GPU, so the app's vision path can be developed and rehearsed on any laptop.
 
 Run from code/app: uvicorn tools.fake_vision:app --port 8020, then give a rack in the racks file
-vision: {url: "http://127.0.0.1:8020", camera: live01} and start the app (racks.memox.yaml has that rack).
+vision: {url: "http://127.0.0.1:8020", camera: live01} and start the app (A2 in racks.demo.yaml has such a block).
 Endpoints as in the real service: GET /health, GET /cameras/{id}/status, GET /cameras/{id}/preview.jpg (an SVG
 drawing of the hooks here; the real one is the blurred camera picture). A new "frame" is decided every FRAME_S
 seconds. Rehearse the live demo by hand:
