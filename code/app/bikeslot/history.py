@@ -17,16 +17,7 @@ MINUTE = "%Y-%m-%dT%H:%M"  # one sample per rack per minute, the latest in that 
 FULL_SHARE = 0.5  # a slot counts as usually full when the rack was full in at least this share of samples
 MIN_DAYS = 2  # ... and those samples come from at least this many days
 BEST_FREE = 2  # best_before: the last slot before that with at least this many free on average
-
-
-def parse_clock(text: str | None) -> datetime | None:
-    """The demo driver's simulated local time, for example 2026-11-02T07:35; None when missing or malformed."""
-    if not text:
-        return None
-    try:
-        return datetime.fromisoformat(text.strip()).replace(tzinfo=None, second=0, microsecond=0)
-    except ValueError:
-        return None
+FADE_MIN = 60  # arrival: today's difference from the usual day halves with every this many minutes ahead
 
 
 def day_type(moment: datetime) -> str:
@@ -47,16 +38,27 @@ class History:
         self.samples: dict[str, dict[str, tuple[int, int]]] = {}  # rack id -> minute -> (free, capacity)
         self.changed = False
         self._profiles: dict[str, dict[str, tuple[list[dict], int]]] = {}  # rack id -> day type -> profile
-
-    @staticmethod
-    def moment(rack, now: float) -> datetime:
-        """'Now' for a rack: the simulated time of a demo rack fed with a clock, else the real local time."""
-        return rack.demo_clock or datetime.fromtimestamp(now)
+        self.groups: dict[str, list[str]] = {}  # location id -> its racks' ids, whose samples are added per minute
 
     def record(self, rack_id: str, moment: datetime, free: int, capacity: int) -> None:
         self.samples.setdefault(rack_id, {})[moment.strftime(MINUTE)] = (free, capacity)
         self._profiles.pop(rack_id, None)
+        for group, parts in self.groups.items():
+            if rack_id in parts:
+                self._profiles.pop(group, None)
         self.changed = True
+
+    def samples_of(self, key: str) -> dict[str, tuple[int, int]]:
+        """A rack's samples, or a location's: per minute the sum over its racks with a sample in that minute (a
+        rack without one adds no free spaces)."""
+        if key not in self.groups:
+            return self.samples.get(key, {})
+        summed: dict[str, tuple[int, int]] = {}
+        for part in self.groups[key]:
+            for minute, (free, capacity) in self.samples.get(part, {}).items():
+                had_free, had_capacity = summed.get(minute, (0, 0))
+                summed[minute] = (had_free + free, had_capacity + capacity)
+        return summed
 
     def profile(self, rack_id: str, kind: str) -> tuple[list[dict], int]:
         """Per 15-minute slot of a `kind` day: average free, share of samples with the rack full, sample count and
@@ -66,7 +68,7 @@ class History:
             sums, fulls, counts = [0] * SLOTS, [0] * SLOTS, [0] * SLOTS
             slot_days: list[set[str]] = [set() for _ in range(SLOTS)]
             kinds: dict[str, str] = {}
-            for minute, (free, _capacity) in self.samples.get(rack_id, {}).items():
+            for minute, (free, _capacity) in self.samples_of(rack_id).items():
                 date = minute[:10]
                 if date not in kinds:
                     kinds[date] = day_type(datetime.strptime(date, "%Y-%m-%d"))
@@ -105,21 +107,38 @@ class History:
         }
 
     def forecast(self, rack, now: float) -> dict:
-        insights = self.insights(rack.id, self.moment(rack, now))
+        insights = self.insights(rack.id, datetime.fromtimestamp(now))
         return {key: insights[key] for key in ("usually_full_by", "usual_free_now", "days", "learning")}
 
+    def usual_free(self, rack_id: str, moment: datetime) -> float | None:
+        here = self.profile(rack_id, day_type(moment))[0][slot_of(moment)]
+        return here["free"] if here["n"] else None
+
+    def arrival(self, rack, now: float, free_now: int | None, minutes: int) -> dict:
+        """Free spaces expected `minutes` from now: the usual count then plus today's difference from the usual count
+        now, fading with the time ahead. Without a usual count at either time: the count now."""
+        moment = datetime.fromtimestamp(now)
+        then = moment + timedelta(minutes=minutes)
+        free = None
+        if free_now is not None:
+            usual_now, usual_then = self.usual_free(rack.id, moment), self.usual_free(rack.id, then)
+            guess = free_now
+            if usual_now is not None and usual_then is not None:
+                guess = usual_then + (free_now - usual_now) * 0.5 ** (minutes / FADE_MIN)
+            free = round(min(rack.capacity, max(0, guess)))
+        return {"minutes": minutes, "at": then.strftime("%H:%M"), "free": free}
+
     def view(self, rack, now: float, free_now: int | None) -> dict:
-        moment = self.moment(rack, now)
+        moment = datetime.fromtimestamp(now)
         kind = day_type(moment)
         slots, _days = self.profile(rack.id, kind)
         today, until = moment.strftime("%Y-%m-%d"), moment.strftime(MINUTE)
         sofar: dict[int, list[int]] = {}
-        for minute, (free, _capacity) in self.samples.get(rack.id, {}).items():
+        for minute, (free, _capacity) in self.samples_of(rack.id).items():
             if minute[:10] == today and minute <= until:
                 sofar.setdefault((int(minute[11:13]) * 60 + int(minute[14:16])) // SLOT_MIN, []).append(free)
         return {
             "rack": rack.id,
-            "clock": "demo" if rack.demo_clock else "real",
             "now": moment.strftime("%H:%M"),
             "day_type": kind,
             "free_now": free_now,

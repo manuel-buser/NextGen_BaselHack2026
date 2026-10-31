@@ -16,10 +16,14 @@ class Settings:
     min_confidence: float = 0.4  # a "free" with less confidence than this counts as taken
     camera_pull: bool = True  # poll the racks that have a `camera` block; CAMERA_PULL=0 turns all polling off
     hot_limit_c: float = 75.0  # above this chip temperature a camera counts as too hot when the node does not say
-    # None keeps the history in memory only (tests); HISTORY_FILE defaults to data/history.json, empty also means None
+    # None keeps history in memory only; HISTORY_FILE defaults to data/history.json, empty means None
     history_file: str | None = None
     # Place search for the user page; GEOCODER_URL= (empty) turns it off
     geocoder_url: str = "https://nominatim.openstreetmap.org/search"
+    # Racks with a `vision` block: how often the app asks the vision service for the decided spaces, and the shared
+    # secret the service must send when it pushes them instead (X-Vision-Token); empty = no token needed
+    vision_poll_s: float = 3.0
+    vision_token: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -35,4 +39,6 @@ class Settings:
             hot_limit_c=float(env("HOT_LIMIT_C", cls.hot_limit_c)),
             history_file=env("HISTORY_FILE", "data/history.json") or None,
             geocoder_url=env("GEOCODER_URL", cls.geocoder_url),
+            vision_poll_s=float(env("VISION_POLL_S", cls.vision_poll_s)),
+            vision_token=env("VISION_TOKEN", cls.vision_token),
         )

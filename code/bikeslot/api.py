@@ -9,6 +9,13 @@ Contract for the ESP32 team:  POST /cameras/{camera_id}/frames  with Content-Typ
 JPEG bytes as body (multipart "file" also works).  Contract for the frontend: GET /sites,
 GET /cameras/{id}/status, GET /cameras/{id}/preview.jpg; admin: POST .../calibrate, PUT .../layout.
 
+Two occupancy engines share this API (per camera: ``layout.params.engine``, default BIKESLOT_ENGINE):
+``detector`` (YOLO + slot geometry, occupancy.py) and ``classifier`` (fixed slot polygons + per-crop CNN,
+slotcls/, see documentation/slot-classifier.md).
+
+Hand-over to the app (code/app): the app polls GET /cameras/{id}/status itself (racks file: ``vision: {url, camera}``),
+or this service pushes every new status to it when BIKESLOT_APP_URL is set (forward.py). Never pictures.
+
 Coordinate note: ``CameraStatus.slots[].polygon`` and the layout returned with ``?pixels=true`` are pixel
 coordinates of ``frame_size`` (the working frame, longer side 1280).  ``calibration-frame.jpg`` has exactly
 that size, so polygons can be drawn on it 1:1; ``preview.jpg`` is downscaled to 800 px width.
@@ -27,7 +34,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 
-from . import __version__, config, demo, detector, pull, vlm
+from . import __version__, config, demo, detector, forward, pull, vlm
 from .geometry import denormalize, normalize, resize_max_side
 from .occupancy import analyze_frame
 from .preview import blurred_jpeg, render
@@ -43,6 +50,14 @@ async def lifespan(app: FastAPI):
         seeded = store.seed_golden()
         if seeded:
             print(f"[bikeslot] golden layout loaded for {seeded.camera_id} ({len(seeded.slots)} slots, {seeded.status})")
+    if config.SEED_DEMO_LAYOUT:
+        seeded = store.seed_layout_file(config.DEMO_LAYOUT)
+        if seeded:
+            print(f"[bikeslot] demo slot layout loaded for {seeded.camera_id} ({len(seeded.slots)} slots, engine classifier)")
+        for live_id in config.DEMO_LAYOUT_CAMERAS:   # the live camera films the same hooks: same polygons, same engine
+            live = store.seed_layout_file(config.DEMO_LAYOUT, camera_id=live_id)
+            if live:
+                print(f"[bikeslot] demo slot layout also loaded for {live.camera_id} ({len(live.slots)} slots, source {live.source})")
     print(f"[bikeslot] {len(store.cameras)} camera(s) known, loading detector {config.MODEL_NAME} ...")
     await run_in_threadpool(detector.load)
     print(f"[bikeslot] detector ready: {detector.info()}")
@@ -52,10 +67,12 @@ async def lifespan(app: FastAPI):
     from . import stands
     threading.Thread(target=stands._load, name="stands-warmup", daemon=True).start()
     pull.start(_ingest)
+    forward.start()
     if config.DEMO_PREWARM:
         threading.Thread(target=demo.prewarm, name="demo-warmup", daemon=True).start()
     yield
     pull.stop_all()
+    forward.stop()
 
 
 app = FastAPI(title="bikeslot", version=__version__, lifespan=lifespan,
@@ -82,17 +99,34 @@ def _decode(data: bytes) -> np.ndarray:
     return img
 
 
+def _engine(cam: CameraState) -> str:
+    """'detector' (YOLO + slot geometry, occupancy.py) or 'classifier' (per-slot crop CNN, slotcls/).
+
+    Chosen per camera by ``layout.params.engine`` (set by slotcls_calibrate.py), else by BIKESLOT_ENGINE."""
+    return str((cam.layout.params or {}).get("engine") or config.ENGINE)
+
+
 def _process(cam: CameraState, img: np.ndarray) -> CameraStatus:
     """Runs in a worker thread: analyse, render preview, record. Serialised per camera via the store lock."""
     frame, _ = resize_max_side(img, config.MAX_SIDE)
     with store.lock:
-        res = analyze_frame(cam.layout, cam.trackers, cam.cache, frame, cam.camera_id)
+        if _engine(cam) == "classifier":
+            from .slotcls import pipeline as slotcls_pipeline
+
+            try:
+                res = slotcls_pipeline.analyze_frame(cam.layout, img, cam.camera_id, cam.trackers)
+            except FileNotFoundError as exc:          # no trained model yet: keep the service up, say why
+                raise HTTPException(503, str(exc))
+        else:
+            res = analyze_frame(cam.layout, cam.trackers, cam.cache, frame, cam.camera_id)
         store.push_frame(cam, res.frame)
         cam.preview_jpeg = render(res.frame, res.status, res.detections, res.assignments)
         cam.calibration_jpeg = blurred_jpeg(res.frame, res.detections, max_width=config.MAX_SIDE)
         store.record_status(cam, res.status, res.detections)
         (store.preview_dir / f"{cam.camera_id}.jpg").write_bytes(cam.preview_jpeg)
-        return store.current_status(cam)
+        status = store.current_status(cam)
+        forward.submit(cam.camera_id, status)   # push mode: the app gets the decided slots from a background thread
+        return status
 
 
 def _ingest(camera_id: str, data: bytes) -> CameraStatus:
@@ -149,8 +183,11 @@ def set_source(camera_id: str, url: str = Query(..., description="snapshot URL t
 
 @app.get("/health", tags=["service"])
 def health():
+    from .slotcls import model as slotcls_model
+
     return {"ok": True, "version": __version__, "detector": detector.info(), "cameras": len(store.cameras),
-            "vlm": vlm.info(), "pull": pull.info(), "time": utcnow()}
+            "vlm": vlm.info(), "pull": pull.info(), "forward": forward.info(), "engine": config.ENGINE,
+            "slot_classifier": slotcls_model.info(), "time": utcnow()}
 
 
 @app.get("/cameras", response_model=list[CameraInfo], tags=["camera"])
