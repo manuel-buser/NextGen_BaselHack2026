@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bike-slot camera</title>
+<style>
+  :root { --bg:#f6f6f4; --fg:#1c1c1a; --muted:#6b6b66; --card:#fff; --line:#e2e2dd; --ok:#1f7a3f; --bad:#b3261e; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#151514; --fg:#ececea; --muted:#9a9a94; --card:#1f1f1d; --line:#33332f; --ok:#5cc983; --bad:#ff8a80; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.45 system-ui, sans-serif; }
+  main { max-width:1100px; margin:0 auto; padding:16px; display:grid; gap:16px; grid-template-columns: 1fr; }
+  @media (min-width: 900px) { main { grid-template-columns: 2fr 1fr; } }
+  h1 { font-size:18px; margin:0 0 4px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  img { width:100%; height:auto; display:block; border-radius:6px; background:var(--line); min-height:200px; }
+  .meta { color:var(--muted); font-size:13px; margin-top:8px; }
+  .badge { display:inline-block; padding:2px 10px; border-radius:99px; font-weight:600; font-size:13px; }
+  .on { color:var(--ok); border:1px solid var(--ok); } .off { color:var(--bad); border:1px solid var(--bad); }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  td { padding:5px 0; border-bottom:1px solid var(--line); } td:last-child { text-align:right; font-variant-numeric: tabular-nums; }
+  #err { color:var(--bad); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+  <section class="card">
+    <h1>Camera <span id="cam">–</span> <span id="badge" class="badge off">waiting</span></h1>
+    <img id="img" alt="Latest snapshot (people and licence plates blurred on the camera)">
+    <div class="meta" id="imgmeta">No snapshot yet</div>
+    <div id="err"></div>
+  </section>
+  <section class="card">
+    <h1>Health</h1>
+    <table id="health"><tr><td>No data yet</td><td></td></tr></table>
+  </section>
+</main>
+<script>
+const key = new URLSearchParams(location.search).get('key');
+const q = key ? '?key=' + encodeURIComponent(key) : '';
+let etag = null;
+
+const rows = [
+  ['Last seen', h => h.last_seen_s == null ? '–' : h.last_seen_s + ' s ago'],
+  ['Uptime', h => fmtDur(h.health && h.health.uptime_s)],
+  ['Temperature', h => num(h.health && h.health.temperature_c, ' °C')],
+  ['Wi-Fi', h => h.health ? (h.health.wifi_ssid || '–') : '–'],
+  ['Signal', h => num(h.health && h.health.wifi_rssi_dbm, ' dBm')],
+  ['Heap free (min)', h => h.health ? kb(h.health.heap_free) + ' (' + kb(h.health.heap_min_free) + ')' : '–'],
+  ['PSRAM free', h => h.health ? kb(h.health.psram_free) + ' / ' + kb(h.health.psram_total) : '–'],
+  ['Snapshots taken', h => num(h.health && h.health.snapshots_taken)],
+  ['Snapshots received', h => num(h.snapshots_received)],
+  ['Last reset', h => h.health ? (h.health.reset_reason || '–') : '–'],
+];
+function num(v, unit = '') { return v == null ? '–' : v + unit; }
+function kb(v) { return v == null ? '–' : Math.round(v / 1024) + ' KB'; }
+function fmtDur(s) { if (s == null) return '–'; const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return (h ? h + ' h ' : '') + m + ' min'; }
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+async function pollSnapshot() {
+  try {
+    const r = await fetch('/snapshot' + q, { headers: etag ? { 'If-None-Match': etag } : {} });
+    if (r.status === 200) {
+      etag = r.headers.get('ETag');
+      const img = document.getElementById('img');
+      const old = img.src;
+      img.src = URL.createObjectURL(await r.blob());
+      if (old.startsWith('blob:')) URL.revokeObjectURL(old);
+    }
+    if (r.status === 200 || r.status === 304) {
+      document.getElementById('imgmeta').textContent =
+        'Picture ' + r.headers.get('X-Snapshot-Age-S') + ' s old  |  people blurred: ' +
+        (r.headers.get('X-People-Blurred') ?? '–') + '  |  plate areas blurred: ' + (r.headers.get('X-Plates-Blurred') ?? '–');
+      document.getElementById('err').textContent = '';
+    } else if (r.status === 401) {
+      document.getElementById('err').textContent = 'Wrong or missing key: open this page as /?key=...';
+    }
+  } catch (e) {
+    document.getElementById('err').textContent = 'Relay not reachable';
+  }
+}
+
+async function pollHealth() {
+  try {
+    const r = await fetch('/health' + q);
+    if (!r.ok) return;
+    const h = await r.json();
+    document.getElementById('cam').textContent = h.camera_id;
+    const b = document.getElementById('badge');
+    b.textContent = h.online ? 'online' : 'offline';
+    b.className = 'badge ' + (h.online ? 'on' : 'off');
+    document.getElementById('health').innerHTML =
+      rows.map(([label, f]) => '<tr><td>' + esc(label) + '</td><td>' + esc(f(h)) + '</td></tr>').join('');
+  } catch (e) { /* shown by the snapshot poll */ }
+}
+
+pollSnapshot(); pollHealth();
+setInterval(pollSnapshot, 2000);
+setInterval(pollHealth, 3000);
+</script>
+</body>
+</html>
