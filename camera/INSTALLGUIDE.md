@@ -45,10 +45,11 @@ cp src/config.example.h src/config.h
 
 Edit `src/config.h` (gitignored, so passwords stay local):
 
-- `WIFI_NETWORKS`: 2.4 GHz networks, tried in order: `{"ssid", "password", "upload URL"}`.
+- `WIFI_NETWORKS`: 2.4 GHz networks, tried in order: `{"ssid", "password"}`.
   Remove networks you don't use; each unreachable one delays the connect.
-- `CAMERA_ID`: must match a camera id configured on the server.
-- `UPLOAD_TOKEN`: shared secret for **push** mode only (see section 6).
+- `CAMERA_HOSTNAME`: the name shown in a phone hotspot's device list.
+
+That's all: the camera doesn't need to know the server. The server fetches pictures from it.
 
 ## 4. Build
 
@@ -88,7 +89,7 @@ Look for:
 
 ```
 bikeslot: Wi-Fi connected to <ssid>, IP 192.168.x.y
-bikeslot: [<ssid>] live view http://192.168.x.y/  -> uploads to ...
+bikeslot: [<ssid>] live view http://192.168.x.y/  picture http://192.168.x.y/snapshot
 bikeslot: person 0.41 at [...]          <- a person was detected and blurred
 bikeslot: Auto-tune: median ...         <- exposure auto-tuning adjusted (when lighting changes)
 ```
@@ -111,14 +112,12 @@ curl -o img.jpg http://<camera-ip>/snapshot
 ### How pictures reach the server
 
 The ESP32 only takes, auto-tunes and blurs the picture. Bike and slot detection runs in the Python
-server (`code/`) on a laptop. Two ways to get the pictures there:
+server (`code/`) on a laptop, which fetches `http://<camera-ip>/snapshot` on a timer (pull mode,
+configured in `code/bikeslot/config.py` as `PULL_CAMERAS`). The camera never sends anything on its
+own.
 
-- **Pull (used now):** the server fetches `http://<camera-ip>/snapshot`. No URL or token needed in
-  `config.h`. Note: `code/app/bikeslot/state.py` and `code/app/tools/fake_node.py` still use
-  `/capture`; change them to `/snapshot` if you use that app.
-- **Push:** the camera POSTs every `SNAPSHOT_INTERVAL_S` to the upload URL in `config.h` with
-  `X-Camera-Id` and `X-Upload-Token` headers. If nothing listens there, the log shows
-  `Upload [timer] failed: ESP_ERR_HTTP_CONNECT`. That is harmless in pull mode.
+Note: `code/app/bikeslot/state.py` and `code/app/tools/fake_node.py` still use `/capture`; change
+them to `/snapshot` if you use that app.
 
 ## Quick reference
 

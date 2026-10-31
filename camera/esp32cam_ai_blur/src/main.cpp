@@ -2,8 +2,7 @@
 //
 // Every picture is processed on the ESP32-S3 before it leaves the camera:
 //   raw RGB565 frame -> ESP-DL pedestrian detector -> people pixelated -> JPEG
-// and then pushed to the server every SNAPSHOT_INTERVAL_S, or fetched by the laptop via
-// GET /snapshot (pull mode, poll_camera.py). GET / is a live view for aiming the camera.
+// and then fetched by the laptop via GET /snapshot (pull mode). GET / is a live view for aiming the camera.
 // Unblurred frames exist only in camera RAM for the ~1 s of processing.
 //
 // Board: Seeed XIAO ESP32S3 Sense (OV2640 / OV3660), ESP-IDF >= 5.3, ESP-DL pedestrian_detect.
@@ -18,7 +17,6 @@
 
 #include "esp_camera.h"
 #include "esp_event.h"
-#include "esp_http_client.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -51,20 +49,11 @@
 #ifndef BLUR_HOLD_MS
 #define BLUR_HOLD_MS 2000       // keep blurring a person's last position this long (missed frames)
 #endif
-#ifndef PERSON_MAX_AREA
-#define PERSON_MAX_AREA 0.25f   // people cover more than this share of the picture: don't upload yet
-#endif
-#ifndef PERSON_RETRY_S
-#define PERSON_RETRY_S 5        // ...try again after this many seconds
-#endif
 #ifndef PERSON_HUGE_BOX_FRAC
 #define PERSON_HUGE_BOX_FRAC 0.6f   // a "person" box covering more of the picture than this...
 #endif
 #ifndef PERSON_HUGE_BOX_SCORE
 #define PERSON_HUGE_BOX_SCORE 0.7f  // ...only counts with at least this confidence (else false alarm)
-#endif
-#ifndef PERSON_MAX_WAIT_S
-#define PERSON_MAX_WAIT_S 30    // ...but send anyway after this long (heartbeat for the server)
 #endif
 
 // Licence plates: colour-based finder for yellow (S-pedelec, moped) and white plates.
@@ -116,13 +105,8 @@ static SemaphoreHandle_t s_cam_lock;  // camera + detector are shared by the loo
 struct WifiNet {
     const char *ssid;
     const char *password;
-    const char *server_url;  // the laptop's upload URL on that network
 };
-#ifdef WIFI_NETWORKS
 static const WifiNet s_nets[] = WIFI_NETWORKS;
-#else
-static const WifiNet s_nets[] = {{WIFI_SSID, WIFI_PASSWORD, SERVER_URL}};
-#endif
 static const int s_net_count = sizeof(s_nets) / sizeof(s_nets[0]);
 static int s_net = 0, s_net_fails = 0;
 #ifndef WIFI_SWITCH_AFTER
@@ -659,7 +643,7 @@ static bool take_shot(Shot &s)
 
 // ---------------------------------------------------------------- shared latest picture
 // One background task processes ~1 picture per LIVE_INTERVAL_MS while someone watches the live
-// view; every viewer and the uploader get that same finished picture. Before this, each browser
+// view; every viewer and the server's poller get that same finished picture. Before this, each browser
 // request ran the whole pipeline itself and several open tabs made the camera unusably slow.
 #ifndef LIVE_INTERVAL_MS
 #define LIVE_INTERVAL_MS 1000
@@ -709,53 +693,6 @@ static void live_task(void *)
             vTaskDelay(pdMS_TO_TICKS(200));
         }
     }
-}
-
-// ---------------------------------------------------------------- push upload
-
-enum UploadResult { UPLOAD_SENT, UPLOAD_SKIPPED_PEOPLE, UPLOAD_FAILED };
-
-// force = send even if people cover a large part of the picture
-static UploadResult upload(const char *trigger, bool force)
-{
-    ShotPtr sh = get_shot(1500);   // reuse the live view's picture if it is fresh
-    if (!sh) return UPLOAD_FAILED;
-    const Shot &s = *sh;
-    if (!force && s.person_area > PERSON_MAX_AREA) {
-        // the slots are hidden behind people anyway - wait until they have left
-        ESP_LOGI(TAG, "People cover %.0f%% of the picture - not sending, retry in %d s", s.person_area * 100,
-                 PERSON_RETRY_S);
-        return UPLOAD_SKIPPED_PEOPLE;
-    }
-
-    esp_http_client_config_t cfg = {};
-    cfg.url = s_nets[s_net].server_url;
-    cfg.method = HTTP_METHOD_POST;
-    cfg.timeout_ms = 10000;
-    esp_http_client_handle_t c = esp_http_client_init(&cfg);
-    char people[8];
-    snprintf(people, sizeof(people), "%d", s.people);
-    esp_http_client_set_header(c, "Content-Type", "image/jpeg");
-    esp_http_client_set_header(c, "X-Camera-Id", CAMERA_ID);
-    esp_http_client_set_header(c, "X-Upload-Token", UPLOAD_TOKEN);
-    esp_http_client_set_header(c, "X-Trigger", trigger);
-    esp_http_client_set_header(c, "X-People-Blurred", people);
-    char plates_n[8];
-    snprintf(plates_n, sizeof(plates_n), "%d", s.plates);
-    esp_http_client_set_header(c, "X-Plates-Blurred", plates_n);
-    // where people were: the server marks slots behind them as "unknown" instead of "free"
-    if (!s.boxes.empty()) esp_http_client_set_header(c, "X-Person-Boxes", s.boxes.c_str());
-    esp_http_client_set_post_field(c, reinterpret_cast<const char *>(s.jpg), s.len);
-
-    const esp_err_t err = esp_http_client_perform(c);
-    if (err == ESP_OK) {
-        ESP_LOGI(TAG, "Upload [%s] %u bytes, %d people + %d plates blurred (%lld ms) -> HTTP %d", trigger,
-                 (unsigned)s.len, s.people, s.plates, s.detect_ms, esp_http_client_get_status_code(c));
-    } else {
-        ESP_LOGW(TAG, "Upload [%s] failed: %s (use pull mode: poll_camera.py)", trigger, esp_err_to_name(err));
-    }
-    esp_http_client_cleanup(c);
-    return err == ESP_OK ? UPLOAD_SENT : UPLOAD_FAILED;
 }
 
 // ---------------------------------------------------------------- live view / pull mode
@@ -937,28 +874,11 @@ extern "C" void app_main(void)
     web_start();
     xTaskCreatePinnedToCore(live_task, "live", 16384, nullptr, 4, nullptr, 1);
 
-    // Upload schedule: every SNAPSHOT_INTERVAL_S; if people block the picture, retry every
-    // PERSON_RETRY_S, and after PERSON_MAX_WAIT_S send anyway so the server knows we are alive.
-    const char *trigger = "boot";
-    int64_t next_upload = esp_timer_get_time(), due_since = next_upload, last_addr = 0;
+    // Pull mode only: the server fetches GET /snapshot. Repeat the address now and then,
+    // because USB serial often misses the boot messages.
     while (true) {
-        const int64_t now = esp_timer_get_time();
-        if (now - last_addr >= 15 * 1000000LL) {  // USB serial often misses the boot messages
-            last_addr = now;
-            ESP_LOGI(TAG, "[%s] live view http://" IPSTR "/  -> uploads to %s",
-                     s_nets[s_net].ssid, IP2STR(&s_ip), s_nets[s_net].server_url);
-        }
-        if (now >= next_upload && (xEventGroupGetBits(s_wifi_events) & WIFI_CONNECTED)) {
-            const bool waited_too_long = now - due_since >= PERSON_MAX_WAIT_S * 1000000LL;
-            const UploadResult r = upload(waited_too_long ? "timer-people" : trigger, waited_too_long);
-            if (r == UPLOAD_SKIPPED_PEOPLE) {
-                next_upload = now + PERSON_RETRY_S * 1000000LL;
-            } else {
-                next_upload = now + SNAPSHOT_INTERVAL_S * 1000000LL;
-                due_since = next_upload;
-                trigger = "timer";
-            }
-        }
-        vTaskDelay(pdMS_TO_TICKS(200));
+        ESP_LOGI(TAG, "[%s] live view http://" IPSTR "/  picture http://" IPSTR "/snapshot",
+                 s_nets[s_net].ssid, IP2STR(&s_ip), IP2STR(&s_ip));
+        vTaskDelay(pdMS_TO_TICKS(15000));
     }
 }
