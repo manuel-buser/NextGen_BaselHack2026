@@ -4,7 +4,10 @@ __pycache__/
 *.pt
 runs/
 # Annotated outputs may show people or licence plates - keep them local
-data/out/
+data/
 
 # Endress site photos may show people or licence plates - keep them local
 assets/pictures/EndressPictures/
+
+# API keys - never commit
+.env
