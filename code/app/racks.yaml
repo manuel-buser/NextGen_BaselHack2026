@@ -1,0 +1,27 @@
+# One entry per camera-covered rack. The id is what the camera node and the detector use.
+# location puts the rack on the map (placeholder coordinates near Memox Basel SBB).
+# layout draws the rack plan: rows and cols of spaces, bearing in degrees clockwise from north (the direction
+# along a row from space 1 to the last space), entrance "start" (default) or "end" (which end people arrive
+# from). Spaces are numbered from the entrance along the bearing, row by row, row 1 on the left when looking
+# along the bearing; the detector's slot ids must follow this. Odd racks list spaces: [{id, x, y, w, h}, ...]
+# in grid units instead of rows/cols. The bearings are placeholders too.
+# camera makes the app poll the node instead of waiting for its posts (pull mode, see README):
+# camera: {url: "http://192.168.21.95"} with optional status_path, picture_path, poll_s, picture_every_s.
+racks:
+  - id: A
+    name: Main entrance shelter
+    capacity: 15
+    location: {lat: 47.5463, lng: 7.5950}
+    layout: {rows: 1, cols: 15, bearing: 35}
+  - id: B
+    name: Building 2, north side
+    capacity: 12
+    location: {lat: 47.5472, lng: 7.5969}
+    layout: {rows: 2, cols: 6, bearing: 120}
+# places: where people go (buildings, entrances), offered on the map as "Where are you going?". Placeholders
+# near the racks.
+places:
+  - {name: Main entrance, location: {lat: 47.5461, lng: 7.5956}}
+  - {name: Building 2, location: {lat: 47.5475, lng: 7.5965}}
+  - {name: Canteen, location: {lat: 47.5468, lng: 7.5981}}
+  - {name: Visitor centre, location: {lat: 47.5455, lng: 7.5985}}

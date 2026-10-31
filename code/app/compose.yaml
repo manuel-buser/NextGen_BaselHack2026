@@ -1,0 +1,20 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # fake = built-in stand-in. Detector on the same laptop: http://host.docker.internal:8001,
+      # inside this compose file: http://detector:8001.
+      DETECTOR_URL: ${DETECTOR_URL:-fake}
+      # racks.demo.yaml adds made-up racks for a demo with one camera (fed by tools/demo_data.py).
+      BIKESLOT_RACKS: ${BIKESLOT_RACKS:-racks.yaml}
+      STALE_AFTER_S: ${STALE_AFTER_S:-60}
+      # free counts over time; ./data keeps them across restarts
+      HISTORY_FILE: /app/data/history.json
+      # local clock for the predictions (container default is UTC)
+      TZ: ${TZ:-Europe/Zurich}
+    volumes:
+      - ./data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
