@@ -1,6 +1,6 @@
 """Stand-in for the camera node: posts a picture and an alive message every few seconds.
 
-Standard library only: python tools/fake_camera.py --app http://localhost:8000 --rack A --interval 5
+Standard library only: python tools/fake_camera.py --app http://localhost:8000 --rack A2 --interval 5
 With --images DIR it sends real JPEG files in turn. Without it, synthetic bytes whose length steers the
 built-in fake detector; the taken count random-walks between 0 and --capacity.
 """
@@ -35,7 +35,7 @@ def post(url: str, data: bytes, content_type: str, node_id: str) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--app", default="http://localhost:8000")
-    parser.add_argument("--rack", default="A")
+    parser.add_argument("--rack", default="A2")
     parser.add_argument("--interval", type=float, default=5.0, help="seconds between pictures")
     parser.add_argument("--images", help="folder with JPEG files to send in turn")
     parser.add_argument("--capacity", type=int, default=15, help="only for synthetic pictures")
