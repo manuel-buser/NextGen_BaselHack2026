@@ -99,3 +99,10 @@ BLUR_CLASSES = {CLS_PERSON, CLS_MOTORCYCLE}      # faces + licence plates are ne
 
 # --- service -----------------------------------------------------------------
 SEED_GOLDEN = _env("SEED_GOLDEN", True)
+DEMO_PREWARM = _env("DEMO_PREWARM", True)   # compute the /demo example images in the background at start
+
+# --- pull mode ---------------------------------------------------------------
+# cameras the service polls itself: "cam_id=url,cam_id2=url2" (empty string disables pulling)
+PULL_CAMERAS = _env("PULL_CAMERAS", "live01=http://192.168.21.95/snapshot")
+PULL_INTERVAL = _env("PULL_INTERVAL", 5.0)     # seconds between snapshots per camera
+PULL_TIMEOUT = _env("PULL_TIMEOUT", 10.0)

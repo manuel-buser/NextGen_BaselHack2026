@@ -1,0 +1,386 @@
+"""In-memory state: racks, slots, camera nodes, detector health. Pictures are never kept."""
+
+from __future__ import annotations
+
+import time
+from collections import deque
+from dataclasses import dataclass
+from datetime import datetime
+from urllib.parse import urlsplit
+
+import yaml
+
+from .config import Settings
+from .history import History
+
+TAKEN, FREE, UNSURE = "taken", "free", "unsure"
+
+
+class Slot:
+    """Remembers the last few observations of one parking space (True = a bike was seen)."""
+
+    def __init__(self, window: int) -> None:
+        self.recent: deque[bool] = deque(maxlen=window)
+        self.confidence = 0.0
+
+    def observe(self, bike_seen: bool, confidence: float) -> None:
+        self.recent.append(bike_seen)
+        self.confidence = confidence
+
+    @property
+    def ready(self) -> bool:
+        return len(self.recent) == self.recent.maxlen
+
+    @property
+    def state(self) -> str:
+        # One sighting shows taken at once; free needs a full window of clean pictures (safe side).
+        if any(self.recent):
+            return TAKEN
+        return FREE if self.ready else "unknown"
+
+
+@dataclass
+class Camera:
+    node_id: str | None = None
+    source: str | None = None  # "push": the node posts to the app; "pull": the app polls the node
+    last_alive_at: float | None = None
+    last_picture_at: float | None = None
+    pictures: int = 0
+    last_picture_bytes: int = 0
+    temp_c: float | None = None
+    too_hot: bool = False
+    too_hot_derived: bool = False  # the node sent no flag, so too_hot is temp_c compared with HOT_LIMIT_C
+    last_error: str | None = None
+    last_error_at: float | None = None
+    # What the node reports about itself (pull status JSON, or the same keys in a pushed alive message).
+    uptime_s: int | None = None
+    rebooted_at: float | None = None  # when the uptime last dropped below the previous reading
+    wifi_rssi_dbm: int | None = None
+    wifi_connected: bool | None = None
+    wifi_channel: int | None = None
+    heap_free: int | None = None
+    heap_min_free: int | None = None
+    heap_largest_block: int | None = None
+    psram_free: int | None = None
+    psram_total: int | None = None
+    stream_frames: int | None = None
+    stream_dropped: int | None = None
+    ip: str | None = None
+
+
+NODE_FIELDS = (
+    "uptime_s", "rebooted_at", "wifi_rssi_dbm", "wifi_connected", "wifi_channel", "heap_free", "heap_min_free",
+    "heap_largest_block", "psram_free", "psram_total", "stream_frames", "stream_dropped", "ip",
+)
+
+
+@dataclass(frozen=True)
+class PullCamera:
+    """The `camera` block of a rack: where the app polls the node instead of waiting for its posts."""
+
+    url: str
+    status_path: str = "/status"
+    picture_path: str = "/capture"
+    poll_s: float = 5.0
+    picture_every_s: float = 10.0
+
+    @property
+    def node_id(self) -> str:
+        return urlsplit(self.url).hostname or self.url
+
+    @property
+    def status_url(self) -> str:
+        return self.url + self.status_path
+
+    @property
+    def picture_url(self) -> str:
+        return self.url + self.picture_path
+
+
+def camera_from_yaml(raw: dict | None, rack_id: str) -> PullCamera | None:
+    if raw is None:
+        return None
+    url = str(raw.get("url", "")).rstrip("/")
+    if not url.startswith(("http://", "https://")):
+        raise ValueError(f"rack {rack_id}: camera url must start with http:// or https://, got {url!r}")
+    defaults = PullCamera(url)
+    status_path, picture_path = str(raw.get("status_path", defaults.status_path)), str(raw.get("picture_path", defaults.picture_path))
+    if not status_path.startswith("/") or not picture_path.startswith("/"):
+        raise ValueError(f"rack {rack_id}: camera status_path and picture_path must start with /")
+    poll_s, picture_every_s = float(raw.get("poll_s", defaults.poll_s)), float(raw.get("picture_every_s", defaults.picture_every_s))
+    if poll_s <= 0 or picture_every_s <= 0:
+        raise ValueError(f"rack {rack_id}: camera poll_s and picture_every_s must be above 0")
+    return PullCamera(url, status_path, picture_path, poll_s, picture_every_s)
+
+
+@dataclass
+class DetectorHealth:
+    last_ok_at: float | None = None
+    last_latency_ms: float | None = None
+    model: str | None = None
+    last_error: str | None = None
+    last_error_at: float | None = None
+
+
+def _num(value) -> int | float:
+    number = float(value)
+    return int(number) if number.is_integer() else number
+
+
+def layout_from_yaml(raw: dict | None, capacity: int, rack_id: str) -> dict | None:
+    """Turn the optional `layout` of a rack into one shape in grid units: x runs along the bearing from
+    space 1, y across it (row 1 is y 0). Either `rows`/`cols` or an explicit `spaces` list."""
+    if raw is None:
+        return None
+    bearing = _num(raw.get("bearing", 0))
+    entrance = str(raw.get("entrance", "start"))
+    if not 0 <= bearing <= 360:
+        raise ValueError(f"rack {rack_id}: layout bearing must be 0 to 360 degrees, got {bearing}")
+    if entrance not in ("start", "end"):
+        raise ValueError(f"rack {rack_id}: layout entrance must be 'start' or 'end', got {entrance!r}")
+    space_m = raw.get("space_m", [0.7, 1.9])
+    if not isinstance(space_m, list) or len(space_m) != 2 or not all(_num(v) > 0 for v in space_m):
+        raise ValueError(f"rack {rack_id}: layout space_m must be [along_row, depth] in metres, both above 0, got {space_m!r}")
+    row_gap_m = _num(raw.get("row_gap_m", 0.6))
+    if row_gap_m < 0:
+        raise ValueError(f"rack {rack_id}: layout row_gap_m must be 0 or more metres, got {row_gap_m}")
+    if "spaces" in raw:
+        spaces = [
+            {"id": int(s["id"]), "x": _num(s["x"]), "y": _num(s["y"]), "w": _num(s.get("w", 1)), "h": _num(s.get("h", 1))}
+            for s in raw["spaces"]
+        ]
+    else:
+        rows, cols = int(raw["rows"]), int(raw["cols"])
+        spaces = [{"id": r * cols + c + 1, "x": c, "y": r, "w": 1, "h": 1} for r in range(rows) for c in range(cols)]
+    if sorted(s["id"] for s in spaces) != list(range(1, capacity + 1)):
+        raise ValueError(f"rack {rack_id}: layout space ids must be exactly 1 to {capacity} (the capacity)")
+    return {
+        "bearing": bearing,
+        "entrance": entrance,
+        "space_m": [_num(v) for v in space_m],
+        "row_gap_m": row_gap_m,
+        "width": max(s["x"] + s["w"] for s in spaces),
+        "height": max(s["y"] + s["h"] for s in spaces),
+        "spaces": sorted(spaces, key=lambda s: s["id"]),
+    }
+
+
+class Rack:
+    def __init__(
+        self,
+        rack_id: str,
+        name: str,
+        capacity: int,
+        window: int,
+        location: dict | None = None,
+        demo: bool = False,
+        layout: dict | None = None,
+        pull: PullCamera | None = None,
+    ) -> None:
+        self.id = rack_id
+        self.name = name
+        self.capacity = capacity
+        self.window = window
+        self.location = location  # {"lat": .., "lng": ..} or None: list only, no map pin
+        self.demo = demo  # made up, fed by tools/demo_data.py: labelled on the pages, never sent to the real detector
+        self.layout = layout  # drawn plan of the spaces (see layout_from_yaml) or None: plain square row
+        self.pull = pull  # the app polls this node (see camera_from_yaml) or None: the node posts to the app
+        self.slots: dict[int, Slot] = {}
+        self.counts: deque[int] = deque(maxlen=window)  # count mode: free spaces observed
+        self.mode: str | None = None  # "slots" or "count", set by the first detector result
+        self.camera = Camera()
+        self.last_result_at: float | None = None
+        self.demo_clock: datetime | None = None  # demo racks only: the driver's simulated time of the latest picture
+
+    def apply(self, result: dict, settings: Settings, now: float) -> None:
+        slots = result.get("slots")
+        if slots:
+            self.mode = "slots"
+            for item in slots:
+                confidence = float(item.get("confidence", 1.0))
+                clean = item.get("state") == FREE and confidence >= settings.min_confidence
+                self.slots.setdefault(int(item["id"]), Slot(self.window)).observe(not clean, confidence)
+        elif "bike_count" in result:
+            self.mode = "count"
+            self.counts.append(max(0, self.capacity - int(result["bike_count"])))
+        else:
+            raise ValueError("neither slots nor bike_count")
+        self.last_result_at = now
+
+    @property
+    def ready(self) -> bool:
+        if self.mode == "slots":
+            return bool(self.slots) and all(slot.ready for slot in self.slots.values())
+        if self.mode == "count":
+            return len(self.counts) == self.counts.maxlen
+        return False
+
+    @property
+    def free(self) -> int | None:
+        if not self.ready:
+            return None
+        if self.mode == "slots":
+            return sum(1 for slot in self.slots.values() if slot.state == FREE)
+        return min(self.counts)  # drops at once, rises only when the whole window agrees
+
+    def status(self, settings: Settings, now: float) -> str:
+        if self.last_result_at is None:
+            return "unknown"
+        if not self.ready:
+            return "starting"
+        if now - self.last_result_at > settings.stale_after_s:
+            return "stale"
+        return "ok"
+
+
+class Store:
+    def __init__(self, racks: list[Rack], settings: Settings, places: list[dict] | None = None) -> None:
+        self.racks = {rack.id: rack for rack in racks}
+        self.places = places or []  # destinations people go to: {"name", "location"}
+        self.settings = settings
+        self.detector = DetectorHealth()
+        self.started_at = time.time()
+        self.history = History(settings.history_file)
+
+    @classmethod
+    def from_yaml(cls, path: str, settings: Settings) -> "Store":
+        with open(path, encoding="utf-8") as handle:
+            raw = yaml.safe_load(handle)
+        entries = raw["racks"]
+        places = []
+        for p in raw.get("places") or []:
+            if not isinstance(p, dict) or not p.get("name") or not isinstance(p.get("location"), dict):
+                raise ValueError(f"places: each place needs a name and a location {{lat, lng}}, got {p!r}")
+            lat, lng = float(p["location"]["lat"]), float(p["location"]["lng"])
+            if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+                raise ValueError(f"places: {p['name']}: location is off the globe ({lat}, {lng})")
+            places.append({"name": str(p["name"]), "location": {"lat": lat, "lng": lng}})
+        racks = []
+        for e in entries:
+            loc = e.get("location")
+            location = {"lat": float(loc["lat"]), "lng": float(loc["lng"])} if loc else None
+            demo = bool(e.get("demo", False))
+            rack_id, capacity = str(e["id"]), int(e["capacity"])
+            layout = layout_from_yaml(e.get("layout"), capacity, rack_id)
+            pull = camera_from_yaml(e.get("camera"), rack_id)
+            racks.append(Rack(rack_id, str(e["name"]), capacity, settings.free_after_clean, location, demo, layout, pull))
+        return cls(racks, settings, places)
+
+    def note_alive(self, rack: Rack, report: dict, node_id: str | None, now: float, source: str) -> None:
+        """Record a sign of life; `report` is the node's data normalised by ingest.node_report (Camera field names)."""
+        cam = rack.camera
+        cam.last_alive_at = now
+        cam.node_id = node_id or cam.node_id
+        cam.source = source
+        if cam.uptime_s is not None and report.get("uptime_s") is not None and report["uptime_s"] < cam.uptime_s:
+            cam.rebooted_at = now  # the counter started again, so the node restarted
+        for key, value in report.items():
+            setattr(cam, key, value)
+
+    def note_picture(self, rack: Rack, nbytes: int, node_id: str | None, now: float, source: str) -> None:
+        cam = rack.camera
+        cam.last_picture_at = now
+        cam.last_alive_at = now
+        cam.pictures += 1
+        cam.last_picture_bytes = nbytes
+        cam.node_id = node_id or cam.node_id
+        cam.source = source
+
+    def note_camera_error(self, rack: Rack, message: str, now: float) -> None:
+        rack.camera.last_error = message
+        rack.camera.last_error_at = now
+
+    def apply_detection(self, rack: Rack, result: dict, latency_ms: float, now: float, demo_clock: datetime | None = None) -> None:
+        rack.apply(result, self.settings, now)
+        rack.demo_clock = demo_clock if rack.demo else None  # a real rack always runs on the real clock
+        if rack.status(self.settings, now) == "ok":
+            self.history.record(rack.id, self.history.moment(rack, now), rack.free, rack.capacity)
+        if rack.demo:  # the stand-in answered, so this says nothing about the detector
+            return
+        self.detector.last_ok_at = now
+        self.detector.last_latency_ms = round(latency_ms, 1)
+        self.detector.model = result.get("model")
+
+    def note_detector_error(self, message: str, now: float) -> None:
+        self.detector.last_error = message
+        self.detector.last_error_at = now
+
+    def rack_view(self, rack: Rack, now: float) -> dict:
+        return {
+            "id": rack.id,
+            "name": rack.name,
+            "capacity": rack.capacity,
+            "free": rack.free,
+            "status": rack.status(self.settings, now),
+            "mode": rack.mode,
+            "updated_at": rack.last_result_at,
+            "age_s": None if rack.last_result_at is None else round(now - rack.last_result_at, 1),
+            "camera_too_hot": rack.camera.too_hot,
+            "location": rack.location,
+            "demo": rack.demo,
+            "layout": rack.layout,
+            "slots": [{"id": sid, "state": slot.state} for sid, slot in sorted(rack.slots.items())],
+            "forecast": self.history.forecast(rack, now),
+        }
+
+    def history_view(self, rack: Rack, now: float) -> dict:
+        return self.history.view(rack, now, rack.free if rack.status(self.settings, now) == "ok" else None)
+
+    def admin_view(self, now: float) -> dict:
+        def age(stamp: float | None) -> float | None:
+            return None if stamp is None else round(now - stamp, 1)
+
+        cameras = [
+            {
+                "rack": rack.id,
+                "demo": rack.demo,
+                "node_id": rack.camera.node_id,
+                "source": rack.camera.source,
+                "last_alive_at": rack.camera.last_alive_at,
+                "alive_age_s": age(rack.camera.last_alive_at),
+                "last_picture_at": rack.camera.last_picture_at,
+                "picture_age_s": age(rack.camera.last_picture_at),
+                "pictures": rack.camera.pictures,
+                "last_picture_bytes": rack.camera.last_picture_bytes,
+                "temp_c": rack.camera.temp_c,
+                "too_hot": rack.camera.too_hot,
+                "too_hot_derived": rack.camera.too_hot_derived,
+                "last_error": rack.camera.last_error,
+                "last_error_at": rack.camera.last_error_at,
+                "error_age_s": age(rack.camera.last_error_at),
+                "online": rack.camera.last_alive_at is not None
+                and now - rack.camera.last_alive_at <= self.settings.stale_after_s,
+                "node": {key: getattr(rack.camera, key) for key in NODE_FIELDS},
+            }
+            for rack in self.racks.values()
+        ]
+        racks = [
+            {
+                **self.rack_view(rack, now),
+                "slots_observed": len(rack.slots),
+                "slots_ready": sum(1 for slot in rack.slots.values() if slot.ready),
+            }
+            for rack in self.racks.values()
+        ]
+        return {
+            "generated_at": now,
+            "app": {
+                "started_at": self.started_at,
+                "uptime_s": round(now - self.started_at, 1),
+                "racks_file": self.settings.racks_file,
+                "stale_after_s": self.settings.stale_after_s,
+                "free_after_clean": self.settings.free_after_clean,
+                "min_confidence": self.settings.min_confidence,
+            },
+            "detector_results": {
+                "last_ok_at": self.detector.last_ok_at,
+                "ok_age_s": age(self.detector.last_ok_at),
+                "last_latency_ms": self.detector.last_latency_ms,
+                "model": self.detector.model,
+                "last_error": self.detector.last_error,
+                "last_error_at": self.detector.last_error_at,
+                "error_age_s": age(self.detector.last_error_at),
+            },
+            "cameras": cameras,
+            "racks": racks,
+        }

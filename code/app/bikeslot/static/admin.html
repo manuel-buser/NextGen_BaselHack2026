@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Bike Slot admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700&family=Barlow+Condensed:wght@600;700&display=swap">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="page wide">
+    <header class="masthead">
+      <div class="team">
+        <svg class="team-mark" viewBox="0 0 24 24" role="img" aria-label="Team NextGen">
+          <rect y="16" width="8" height="8" rx="2" fill="currentColor"/>
+          <rect x="8" y="8" width="8" height="8" rx="2" fill="currentColor"/>
+          <rect x="16" width="8" height="8" rx="2" fill="#2a78d6"/>
+        </svg>
+        <div>
+          <p class="team-name">NEXTGEN</p>
+          <p class="team-credit">Endress+Hauser challenge at BaselHack 2026</p>
+        </div>
+      </div>
+      <div class="brand">
+        <p class="eyebrow">Operations</p>
+        <h1 class="wordmark">Bike Slot admin</h1>
+      </div>
+      <p class="links"><a href="/">User page</a></p>
+    </header>
+    <main class="content" style="gap: 24px">
+      <section class="kpis" id="kpis" aria-live="polite">
+        <div class="stat"><p class="label">Loading</p><p class="stat-value">...</p></div>
+      </section>
+
+      <section class="section">
+        <h2>Data flow</h2>
+        <div class="flow-wrap">
+          <figure class="flow" id="flow" style="margin: 0" data-level="overview" tabindex="-1">
+            <svg viewBox="0 0 1200 160" role="img" aria-label="Data flow: the camera node sends pictures and health answers to the app, the app passes each picture to the detector, the detector answers per space, the app deletes the picture and then applies its rules, and the user and admin pages each ask for the results in their own loop. Zoom in to see the parts of each step, side by side where they run in parallel.">
+              <defs>
+                <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" data-size="12" orient="auto-start-reverse">
+                  <path d="M0 0L10 5L0 10z" class="arrowhead"/>
+                </marker>
+                <marker id="arrow-small" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5" markerUnits="userSpaceOnUse" data-size="5" orient="auto">
+                  <path d="M0 0L10 5L0 10z" class="arrowhead"/>
+                </marker>
+              </defs>
+              <path id="flow-path" d="M0 80H1198" fill="none" stroke="none"/>
+              <g class="edges">
+                <line class="edge" x1="150" y1="80" x2="260" y2="80" marker-end="url(#arrow)"/>
+                <line class="edge-health" x1="150" y1="103" x2="260" y2="103" marker-end="url(#arrow-small)"/>
+                <line class="edge" x1="412" y1="80" x2="522" y2="80" marker-end="url(#arrow)"/>
+                <line class="edge" x1="674" y1="80" x2="784" y2="80" marker-end="url(#arrow)"/>
+                <line class="edge" x1="936" y1="80" x2="1046" y2="80" marker-end="url(#arrow)"/>
+                <!-- texts set by renderFlow; the small lines show when zoomed in, short enough for the margin beside a step -->
+                <text class="edge-label" data-edge="0" x="206" y="70" text-anchor="middle">picture, health</text>
+                <text class="edge-note" data-edge="0" x="206" y="97" text-anchor="middle"></text>
+                <text class="edge-small" data-edge="0" x="206" y="76" text-anchor="middle"></text>
+                <text class="edge-label" data-edge="1" x="468" y="70" text-anchor="middle">picture</text>
+                <text class="edge-note" data-edge="1" x="468" y="97" text-anchor="middle"></text>
+                <text class="edge-small" data-edge="1" x="468" y="76" text-anchor="middle"></text>
+                <text class="edge-label" data-edge="2" x="730" y="70" text-anchor="middle">answer per space</text>
+                <text class="edge-note" data-edge="2" x="730" y="97" text-anchor="middle"></text>
+                <text class="edge-small" data-edge="2" x="730" y="76" text-anchor="middle"></text>
+                <text class="edge-label" data-edge="3" x="992" y="70" text-anchor="middle">free per rack</text>
+                <text class="edge-note" data-edge="3" x="992" y="97" text-anchor="middle"></text>
+                <text class="edge-small" data-edge="3" x="992" y="76" text-anchor="middle"></text>
+              </g>
+              <!-- beneath the boxes, so in the overview it shows only on the arrows -->
+              <circle class="packet" id="packet" r="7" data-runs="0">
+                <animateMotion id="packet-anim" dur="3s" begin="indefinite" fill="freeze" calcMode="linear"><mpath href="#flow-path"/></animateMotion>
+              </circle>
+              <!-- the health lane from the camera into the app, shown only when zoomed in -->
+              <path id="health-path" d="M26 103H400" fill="none" stroke="none"/>
+              <circle class="pulse" id="pulse" r="1.6">
+                <animateMotion id="pulse-anim" dur="1.2s" begin="indefinite" fill="freeze" calcMode="linear"><mpath href="#health-path"/></animateMotion>
+              </circle>
+              <g class="node" data-node="camera" tabindex="0" role="button" aria-label="Camera node, show details">
+                <rect class="node-box" x="0" y="38" width="150" height="84" rx="12"/>
+                <g class="overview">
+                  <text class="node-title" x="16" y="66">Camera node</text>
+                  <text class="node-sub" x="16" y="85">ESP32-S3 board</text>
+                  <circle class="dot" cx="22" cy="107" r="5"/>
+                  <text class="node-status" x="33" y="111">...</text>
+                </g>
+                <g class="inside" aria-hidden="true"></g>
+              </g>
+              <g class="node" data-node="receive" tabindex="0" role="button" aria-label="App receives, show details">
+                <rect class="node-box" x="262" y="38" width="150" height="84" rx="12"/>
+                <g class="overview">
+                  <text class="node-title" x="278" y="66">App receives</text>
+                  <text class="node-sub" x="278" y="85">held in memory</text>
+                  <circle class="dot" cx="284" cy="107" r="5"/>
+                  <text class="node-status" x="295" y="111">...</text>
+                </g>
+                <g class="inside" aria-hidden="true"></g>
+              </g>
+              <g class="node" data-node="detector" tabindex="0" role="button" aria-label="Detector, show details">
+                <rect class="node-box" x="524" y="38" width="150" height="84" rx="12"/>
+                <g class="overview">
+                  <text class="node-title" x="540" y="66">Detector</text>
+                  <text class="node-sub" x="540" y="85">bikes per slot box</text>
+                  <circle class="dot" cx="546" cy="107" r="5"/>
+                  <text class="node-status" x="557" y="111">...</text>
+                </g>
+                <g class="inside" aria-hidden="true"></g>
+              </g>
+              <g class="node" data-node="decide" tabindex="0" role="button" aria-label="App decides, show details">
+                <rect class="node-box" x="786" y="38" width="150" height="84" rx="12"/>
+                <g class="overview">
+                  <text class="node-title" x="802" y="66">App decides</text>
+                  <text class="node-sub" x="802" y="85">applies the rules</text>
+                  <circle class="dot" cx="808" cy="107" r="5"/>
+                  <text class="node-status" x="819" y="111">...</text>
+                </g>
+                <g class="inside" aria-hidden="true"></g>
+              </g>
+              <g class="node" data-node="pages" tabindex="0" role="button" aria-label="Pages, show details">
+                <rect class="node-box" x="1048" y="38" width="150" height="84" rx="12"/>
+                <g class="overview">
+                  <text class="node-title" x="1064" y="66">Pages</text>
+                  <text class="node-sub" x="1064" y="85">user and admin</text>
+                  <circle class="dot" cx="1070" cy="107" r="5"/>
+                  <text class="node-status" x="1081" y="111">...</text>
+                </g>
+                <g class="inside" aria-hidden="true"></g>
+              </g>
+            </svg>
+            <div class="flow-zoom">
+              <button type="button" id="flow-zoom-in" aria-label="Zoom in">+</button>
+              <button type="button" id="flow-zoom-out" aria-label="Zoom out">&minus;</button>
+              <button type="button" id="flow-zoom-reset">Reset</button>
+            </div>
+            <nav class="flow-steps" id="flow-steps" aria-label="Steps">
+              <button type="button" id="flow-prev" aria-label="Previous step">&larr;</button>
+              <button type="button" data-step="camera">Camera</button>
+              <button type="button" data-step="receive">Receives</button>
+              <button type="button" data-step="detector">Detector</button>
+              <button type="button" data-step="decide">Decides</button>
+              <button type="button" data-step="pages">Pages</button>
+              <button type="button" id="flow-next" aria-label="Next step">&rarr;</button>
+            </nav>
+            <figcaption>Pictures travel left to right. A dot moves along the arrows whenever a camera has sent one; zoomed in, a small dot runs along the thinner health line when a camera reports its health. Click a box for details and live numbers. Zoom with the mouse wheel or the buttons to see the parts inside a step; double-click a step to jump in, drag to pan, use the step buttons or the arrow keys to move between steps, Escape to zoom out.</figcaption>
+          </figure>
+        </div>
+        <dl class="kv flow-detail" id="flow-detail"><dt>Camera node</dt><dd>Loading</dd></dl>
+      </section>
+
+      <div class="duo">
+        <section class="section">
+          <h2>Live activity</h2>
+          <div class="activity" id="activity" role="img" aria-label="Live activity, waiting for the first update"></div>
+        </section>
+        <section class="section">
+          <h2>Detector</h2>
+          <div class="card health" id="detector">Loading</div>
+        </section>
+      </div>
+      <section class="section">
+        <h2>Cameras</h2>
+        <div class="cards" id="cameras"></div>
+      </section>
+    </main>
+    <footer class="foot"><p id="updated">Waiting for the first update</p></footer>
+  </div>
+  <script src="/static/admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+# Demo setup for one real camera, three racks in all: A is real, B and C are made up and fed by tools/demo_data.py
+# (B fills up during the day, C is the furthest from A and stays without data).
+# Start the app with BIKESLOT_RACKS=racks.demo.yaml. A rack with demo: true is labelled "Demo data" on both
+# pages and its pictures are always decided by the built-in stand-in, never by the real detector.
+# Coordinates and bearings are placeholders; see racks.yaml for the layout format.
+racks:
+  - id: A
+    name: Main entrance shelter
+    capacity: 15
+    location: {lat: 47.5463, lng: 7.5950}
+    layout: {rows: 1, cols: 15, bearing: 35}
+    # The camera node, polled by the app. Its address changes with the network: check it before the demo.
+    # The still-picture path is not confirmed yet, so picture_path keeps its default (/capture).
+    camera: {url: "http://192.168.21.95", status_path: /health}
+  - id: B
+    name: Building 2, north side
+    capacity: 12
+    location: {lat: 47.5472, lng: 7.5969}
+    layout: {rows: 2, cols: 6, bearing: 120}
+    demo: true
+  - id: C
+    name: Visitor parking
+    capacity: 8
+    location: {lat: 47.5458, lng: 7.5975}
+    layout: {rows: 1, cols: 8, bearing: 80}
+    demo: true
+# places: where people go (buildings, entrances), offered on the map as "Where are you going?". Placeholders
+# near the racks.
+places:
+  - {name: Main entrance, location: {lat: 47.5461, lng: 7.5956}}
+  - {name: Building 2, location: {lat: 47.5475, lng: 7.5965}}
+  - {name: Canteen, location: {lat: 47.5468, lng: 7.5981}}
+  - {name: Visitor centre, location: {lat: 47.5455, lng: 7.5985}}
