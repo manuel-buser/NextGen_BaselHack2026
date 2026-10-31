@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__, geocoder, routes_admin, routes_camera, routes_public, routes_vision
@@ -20,12 +21,26 @@ from .vision import VisionPoller
 
 STATIC = Path(__file__).parent / "static"
 HISTORY_SAVE_S = 60.0
+READ_METHODS = {"GET", "HEAD"}
 
 
 async def save_history_every(history, seconds: float) -> None:
     while True:
         await asyncio.sleep(seconds)
         history.save()
+
+
+def via_public_address(request: Request) -> bool:
+    """A tunnel visitor arrives under a web name (abc.trycloudflare.com) or with Cloudflare's visitor header; the
+    laptop, the demo feed and the camera use localhost or an IP address."""
+    if "cf-connecting-ip" in request.headers:
+        return True
+    host = request.url.hostname or ""
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return "." in host
+    return False
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -63,6 +78,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         located = [rack.location for rack in app.state.store.racks.values() if rack.location]
         app.state.geocoder = geocoder.Geocoder(settings.geocoder_url, geocoder.viewbox(located))
         geocoder.hide_queries_in_logs(settings.geocoder_url)
+
+    @app.middleware("http")
+    async def read_only_via_public_address(request: Request, call_next):
+        if request.method not in READ_METHODS and via_public_address(request):
+            return JSONResponse({"detail": "read-only through the public address"}, status_code=403)
+        return await call_next(request)
+
     app.include_router(routes_camera.router)
     app.include_router(routes_vision.router)
     app.include_router(routes_public.router)

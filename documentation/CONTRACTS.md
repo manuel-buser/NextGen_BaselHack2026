@@ -24,6 +24,8 @@ Two options. The node implements one of them; the app supports both, chosen per 
 
 Base URL: the laptop running the app, for example `http://192.168.43.10:8000`. Rack id: configured in the
 sketch, must match `code/app/racks.yaml` (`A1` to `A4`). Optional header `X-Node-Id: esp32-1` on every call.
+Through a public address (a tunnel such as `https://abc.trycloudflare.com`) the app is read-only: every POST gets
+`403`. Post to the laptop's IP address or to `localhost`.
 
 ### `POST /api/camera/{rack}/picture`
 - Body: the raw JPEG bytes. Header `Content-Type: image/jpeg`.
