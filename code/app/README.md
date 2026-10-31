@@ -166,6 +166,22 @@ front of the jury; refused while the app uses a real detector). With `--outage` 
 loses its camera from 11:00 to 18:00 (the rack shows "No recent data" once the stale window has passed, hence the
 shorter `STALE_AFTER_S`).
 
+## Public demo in one command
+
+`python tools/deploy.py` (Linux, WSL, macOS) or `py tools\deploy.py` (Windows PowerShell), from any folder. It
+lists what is missing (uv, Python 3.12, the app packages, cloudflared) and asks once, `Install now? [Y/n]`.
+Downloads are pinned and checked against their published SHA256: uv and cloudflared go to `code/app/.deploy/bin`
+(with a downloaded uv, its cache and Python go to `.deploy` too), the packages to `code/app/.venv`; deleting both
+folders removes everything. It then seeds a week of history if `HISTORY_FILE` (default `data/history.json`) does
+not exist, starts the app on 127.0.0.1 with `racks.demo.yaml` and the demo feed (`--feed-real`, camera polling
+off), opens a Cloudflare quick tunnel, opens the link in a new browser window and prints it with a QR code.
+Visitors of the link can only read (see `documentation/CONTRACTS.md`). Logs go to `code/app/.deploy`.
+- Ctrl+C stops the app, the feed and the tunnel. A `git pull` while it runs reloads the app and keeps the link.
+- The link changes at every start: make the QR code for the slides after the final start.
+- `--live`: the real camera feeds its rack, the feed only the demo racks. `--port` (default 8002, the vision
+  service uses 8000), `--racks` (relative to `code/app`).
+- Do not run the Docker app at the same time: both write `data/history.json`.
+
 ## Tests
 
 ```sh

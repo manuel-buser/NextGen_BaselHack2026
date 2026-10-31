@@ -91,6 +91,24 @@ def test_empty_picture_is_400(client):
     assert client.post("/api/camera/A/picture", content=b"").status_code == 400
 
 
+def test_public_address_is_read_only(racks_file):
+    settings = Settings(racks_file=racks_file, detector_url="fake")
+    with TestClient(create_app(settings), base_url="https://abc.trycloudflare.com") as visitor:
+        for page in ("/", "/admin", "/api/racks", "/api/admin/status"):
+            assert visitor.get(page).status_code == 200
+        assert visitor.post("/api/camera/A/alive", json={"tooHot": True}).status_code == 403
+        assert visitor.post("/api/camera/A/picture", content=b"abc").json() == {"detail": "read-only through the public address"}
+        assert visitor.get("/api/racks/A").json()["status"] == "unknown"
+
+
+def test_cloudflare_header_is_read_only_and_local_addresses_may_send(racks_file):
+    for base in ("http://localhost:8000", "http://192.168.43.10:8000", "http://[::1]:8000"):
+        with TestClient(create_app(Settings(racks_file=racks_file, detector_url="fake")), base_url=base) as local:
+            cloudflare = {"CF-Connecting-IP": "203.0.113.7"}
+            assert local.post("/api/camera/A/picture", content=b"abc", headers=cloudflare).status_code == 403
+            assert local.post("/api/camera/A/picture", content=b"abc").status_code == 200
+
+
 def test_pages_are_served(client):
     assert "Find my Bike Slot" in client.get("/").text
     assert "Bike Slot admin" in client.get("/admin").text
