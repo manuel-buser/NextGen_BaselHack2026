@@ -88,11 +88,31 @@ Serial monitor (needs an interactive terminal; Ctrl+C to quit):
 Look for:
 
 ```
-bikeslot: Wi-Fi connected to <ssid>, IP 192.168.x.y
+bikeslot: [1834 ms] Wi-Fi connected to <ssid>, IP 192.168.x.y   <- time since boot
+bikeslot: Saved <ssid> (BSSID ..., channel 5) for fast connect   <- only when the AP changed
 bikeslot: [<ssid>] live view http://192.168.x.y/  picture http://192.168.x.y/snapshot
 bikeslot: person 0.41 at [...]          <- a person was detected and blurred
 bikeslot: Auto-tune: median ...         <- exposure auto-tuning adjusted (when lighting changes)
 ```
+
+### Wi-Fi connection
+
+Wi-Fi starts first and connects in the background while the camera starts. After a successful
+connect, the camera remembers that network's access point and channel (in NVS), and the next boot
+connects to it directly without scanning, whatever the order in `config.h`. If that access point is
+gone, the camera forgets it and scans all configured networks (2 attempts each until the first
+connect, 4 after a later drop).
+
+For range: a scan covers every channel and picks the **strongest** access point with that name
+(memox has several). An access point weaker than -70 dBm (`WIFI_CACHE_MIN_RSSI`) is not
+remembered, so the next boot scans for a better one. The link uses a 20 MHz channel, which holds
+up better at long range than 40 MHz. Every 15 s the log shows the current signal:
+`[memox.world] RSSI -64 dBm ch 5 | live view ...`. Around -70 dBm or better is fine; below
+-80 dBm, move the camera or improve the antenna.
+
+Problems show up in the log with the reason, e.g. `reason 201 (network not found)` or
+`reason 15 (handshake timeout (wrong password?))`. If no network works, the camera lists the
+networks it can see with channel and signal strength, then tries again.
 
 ## 7. Using the camera
 
