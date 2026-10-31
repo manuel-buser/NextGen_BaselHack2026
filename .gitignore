@@ -5,3 +5,6 @@ __pycache__/
 runs/
 # Annotated outputs may show people or licence plates - keep them local
 data/out/
+
+# Endress site photos may show people or licence plates - keep them local
+assets/pictures/EndressPictures/
