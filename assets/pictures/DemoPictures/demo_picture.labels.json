@@ -1,0 +1,31 @@
+{
+  "camera_id": "demo01",
+  "layout": "demo_picture.layout.json",
+  "notes": "19 wall hooks between the two pillars (bay 2 of the Memox wall rack), numbered left to right. The hook pitch is constant, so the row is split 19 ways. A slot is occupied when a bike's front wheel is at its hook or the bike leans on that hook (bikes 2 and 3 lean on the rack instead of hanging, they still take hooks 7 and 11). A handlebar reaching into a neighbouring slot does not occupy it. Hook 3 is hidden behind the bike hanging on hook 4 from this camera position: unknown (not used for training or scoring); counted 2026-10-31 on site.",
+  "frames": [
+    {
+      "file": "demo_picture.jpeg",
+      "slots": {
+        "demo01-S01": "free",
+        "demo01-S02": "free",
+        "demo01-S03": "unknown",
+        "demo01-S04": "occupied",
+        "demo01-S05": "free",
+        "demo01-S06": "free",
+        "demo01-S07": "occupied",
+        "demo01-S08": "free",
+        "demo01-S09": "free",
+        "demo01-S10": "free",
+        "demo01-S11": "occupied",
+        "demo01-S12": "free",
+        "demo01-S13": "free",
+        "demo01-S14": "free",
+        "demo01-S15": "occupied",
+        "demo01-S16": "free",
+        "demo01-S17": "free",
+        "demo01-S18": "free",
+        "demo01-S19": "occupied"
+      }
+    }
+  ]
+}

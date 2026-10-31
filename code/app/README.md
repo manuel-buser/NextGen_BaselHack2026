@@ -7,7 +7,9 @@ on a rack shows its spaces) and the admin page (which components are alive, with
 request and never written anywhere. The map needs internet for its tiles (OpenStreetMap) and the Leaflet
 library; without it the list still works.
 
-Interfaces for the camera node and the recognition service: see `documentation/CONTRACTS.md`.
+Interfaces for the camera node and the recognition service: see `documentation/CONTRACTS.md`. A rack can also take
+its decided spaces from the vision service on the vision laptop instead of pictures: see "Live rack from the
+vision service" below and `documentation/demo-runbook.md` for the pitch set-up.
 
 ## Run with Docker (nothing else to install)
 
@@ -18,6 +20,7 @@ docker compose up --build
 Open http://localhost:8000 (user page) and http://localhost:8000/admin (admin page).
 By default the app uses its built-in stand-in detector (`DETECTOR_URL=fake`). To use the real recognition
 service running on the same laptop: `DETECTOR_URL=http://host.docker.internal:8001 docker compose up --build`.
+`APP_PORT=8080 docker compose up` publishes the app on another port, for a laptop where the vision service has 8000.
 
 ## Run locally (Python 3.12 with uv)
 
@@ -44,7 +47,8 @@ row when you look along the bearing from the entrance. The app checks at startup
 `capacity`.
 Settings are environment variables: `DETECTOR_URL` (default `fake`), `BIKESLOT_RACKS` (default `racks.yaml`),
 `STALE_AFTER_S` (default 60), `FREE_AFTER_CLEAN` (default 3), `MIN_CONFIDENCE` (default 0.4), `CAMERA_PULL`
-(default 1; 0 turns the polling of pull cameras off), `HOT_LIMIT_C` (default 75, see "Pull mode").
+(default 1; 0 turns the polling of pull cameras and vision racks off), `HOT_LIMIT_C` (default 75, see "Pull mode"),
+`VISION_POLL_S` (default 3) and `VISION_TOKEN` (see "Live rack from the vision service").
 
 Place search: `GEOCODER_URL` (default `https://nominatim.openstreetmap.org/search`, empty turns it off) answers
 a place typed into "Where are you going?" on the map. The browser sends the typed text to this server, which asks
@@ -65,6 +69,34 @@ picture every `picture_every_s` seconds, which then goes through the same path a
 fields (temperature, uptime, WiFi signal, free memory) show up on the admin page; when the node sends no
 `too_hot` flag the app derives it from the temperature and `HOT_LIMIT_C`. Fetch errors are shown per camera
 and the next poll tries again. Both options are described in `documentation/CONTRACTS.md`, section 1.
+
+### Live rack from the vision service (`vision`)
+
+The recognition service in `code/bikeslot` (the vision laptop) can keep a rack's camera itself: it fetches the
+pictures from the camera, decides free or taken per hook (slot classifier, smoothed over a few frames) and serves
+the result as JSON. A rack with a `vision` block takes that result instead of pictures. The app applies no rules
+of its own to it (the service has smoothed already, so a change shows at the next poll), and no picture reaches
+the app on this path. The pages label such a rack like any real camera.
+```yaml
+vision: {url: "http://192.168.21.88:8000", camera: live01, poll_s: 3}
+```
+- `camera`: the camera id on the vision service (its `BIKESLOT_PULL_CAMERAS`; `live01` by default).
+- `url` (pull): the app asks `GET {url}/cameras/{camera}/status` every `poll_s` seconds (default `VISION_POLL_S`,
+  3). A status with a new `updated_at` is a new decided frame: `free` and `occupied` become free and taken, an
+  `unknown` hook (not decided yet) keeps the state the app last saw. The admin page shows the service's own counts,
+  its message and its preview (persons blurred by the service, fetched through the app at
+  `GET /api/vision/{rack}/preview.jpg`, never stored).
+- Without `url` (push): the service posts the same JSON to `POST /api/vision/{rack}/status`; on the laptop that is
+  `BIKESLOT_APP_URL=http://<this app>` and `BIKESLOT_APP_RACKS=live01=MX-CAM`. For an app on a server set
+  `VISION_TOKEN`; the service sends it as `X-Vision-Token` (`BIKESLOT_APP_TOKEN`). A rack with a `url` accepts
+  pushes too. A rack goes "stale" after `STALE_AFTER_S` without a new decided frame, like any other.
+- `vision` cannot be combined with `camera` or `demo` on the same rack.
+
+Without the laptop, `uv run uvicorn tools.fake_vision:app --port 8020` serves the service's JSON for camera
+`live01` (19 hooks, bikes drift in and out); `curl -X POST http://127.0.0.1:8020/fake/park/7` parks a bike at hook
+7 and `.../fake/leave/7` takes it away, for a rehearsal of the live moment. `racks.memox.yaml` is the set-up for
+the pitch: bay 2 of the wall rack at Memox (19 hooks, the camera) comes from the vision service, the other three
+bays (10, 19 and 19 hooks) and the racks at the addresses around are demo racks (`documentation/demo-runbook.md`).
 
 ## See something without the hardware
 

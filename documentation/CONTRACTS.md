@@ -2,6 +2,8 @@
 
 Three parts, two interfaces. The app sits in the middle. Everything is plain HTTP with JSON, so each
 part can be built and tested alone. Reference stand-ins for both sides live in `code/app/tools/`.
+A third path (section 2b) is used for the camera kept by the vision laptop: there the vision service holds the
+camera and the per-hook state itself, and the app reads the decided spaces instead of receiving pictures.
 
 ```
  camera node  --JPEG + alive-->  app  --JPEG-->  detector
@@ -121,11 +123,50 @@ own stand-in and never sends them to the detector.
 Reference implementation with the exact shape: `code/app/tools/fake_detector.py`
 (`uvicorn tools.fake_detector:app --port 8001` from `code/app`). Replace the body of `analyze()`.
 
+## 2b. Vision service to app (decided spaces, no pictures)
+
+For a rack with a `vision` block in `code/app/racks*.yaml` (`vision: {url: "http://<vision laptop>:8000",
+camera: live01}`) the vision service (`code/bikeslot`, `documentation/vision-pipeline.md`) keeps the camera:
+it pulls the snapshots, classifies every hook, smooths over a few frames and serves the result. The app only
+reads that result. Two directions, the body is the same `CameraStatus` JSON in both:
+
+- **Pull** (the app asks): `GET {url}/cameras/{camera}/status` every `VISION_POLL_S` seconds (3), timeout 5 s.
+  The admin page also fetches `GET {url}/cameras/{camera}/preview.jpg` through the app.
+- **Push** (the service posts, for an app the laptop can reach but that cannot reach the laptop): `POST
+  /api/vision/{rack}/status` with the JSON body, header `Content-Type: application/json` and, when the app has
+  `VISION_TOKEN` set, `X-Vision-Token: <token>`. On the laptop: `BIKESLOT_APP_URL=http://<app>`,
+  `BIKESLOT_APP_RACKS=live01=MX-CAM`, `BIKESLOT_APP_TOKEN=<token>`. Replies: `200 {"ok": true, "rack": "MX-CAM",
+  "free": 13, "capacity": 18, "status": "ok", "applied": true}` (`applied` false when the status carried no new
+  frame or nothing decided yet), `400` not a status object, `401` token, `404` unknown rack, `409` the rack has no
+  `vision` block.
+
+The fields the app reads:
+```json
+{"camera_id": "live01", "online": true, "updated_at": "2026-11-01T08:00:05.123+00:00", "frame_age_s": 2.1,
+ "layout_status": "confirmed", "slot_count": 18, "free": 13, "occupied": 5, "unknown": 0, "processing_ms": 92.0,
+ "message": "", "preview_url": "/cameras/live01/preview.jpg",
+ "slots": [{"slot_id": "live01-S01", "index": 1, "status": "free"}, {"slot_id": "live01-S03", "index": 3, "status": "occupied"}]}
+```
+- `slots[].index` is the space number 1 to the rack's capacity (hooks numbered left to right in the picture);
+  `status` is `free`, `occupied` or `unknown`. A new `updated_at` means a new decided frame; the same value again
+  is only a sign of life.
+- The app takes `free` and `occupied` as decided (the service has applied its own window and hysteresis; the
+  app's `FREE_AFTER_CLEAN` and `MIN_CONFIDENCE` rules do not apply to this path) and leaves `unknown` hooks as
+  the app last saw them. A rack without a new decided frame for `STALE_AFTER_S` shows "stale".
+- Slot indexes outside 1..capacity, or a slot count that differs from the capacity, are shown as an error on the
+  admin page; the fitting slots are still applied.
+- Other fields of the status are ignored. Nothing about a person is in it; the service blurs persons in its own
+  preview before the app can fetch it.
+
+Stand-in with the exact shape: `code/app/tools/fake_vision.py` (`uvicorn tools.fake_vision:app --port 8020` from
+`code/app`; `POST /fake/park/7`, `POST /fake/leave/7` move a bike for a rehearsal).
+
 ## 3. App to pages (for reference)
 
 - `GET /api/racks` -> `{"generated_at": ..., "racks": [{"id": "A", "name": "...", "capacity": 15, "free": 7,
   "status": "ok|starting|stale|unknown", "mode": "slots|count", "updated_at": ..., "age_s": 4.2,
   "camera_too_hot": false, "location": {"lat": 47.5463, "lng": 7.5950} or null, "demo": false,
+  "source": "camera|vision|demo",
   "layout": {"bearing": 35, "entrance": "start|end", "width": 15, "height": 1,
   "spaces": [{"id": 1, "x": 0, "y": 0, "w": 1, "h": 1}, ...]} or null,
   "slots": [{"id": 1, "state": "taken|free|unknown"}, ...],
@@ -146,7 +187,8 @@ Reference implementation with the exact shape: `code/app/tools/fake_detector.py`
   unless the rack is "ok". `usually_full_by`: the first slot full in at least half of its samples over at least
   2 days; `best_before`: the last slot before it with at least 2 free on average; `days`: days learned for this
   day type; `learning`: fewer than 2 days.
-- `GET /api/admin/status` -> app, detector (reachable, model, last error), cameras (`source` push or pull,
-  last alive, last picture, temperature, too hot and whether it was derived, last error, `node` with uptime,
-  reboot time, WiFi, memory and ip), racks.
+- `GET /api/admin/status` -> app, detector (reachable, model, last error), cameras (`source` push, pull or
+  vision, last alive, last picture, temperature, too hot and whether it was derived, last error, `node` with
+  uptime, reboot time, WiFi, memory and ip, and for a vision rack `vision` with the service's url, camera, `how`
+  pull or push, its own counts, frame age, message, warning and whether a preview is available), racks.
 - `GET /api/health` -> `{"status": "ok"}`.

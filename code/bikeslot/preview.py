@@ -15,8 +15,10 @@ DET_COLORS = {"bicycle": (0, 200, 0), "motorcycle": (0, 140, 255), "person": (0,
 
 
 def render(frame: np.ndarray, status: CameraStatus, dets: list[Detection], assignments: Optional[dict] = None,
-           max_width: int = config.PREVIEW_MAX_WIDTH, show_detections: bool = True) -> bytes:
-    """Return JPEG bytes of the blurred, annotated frame (slots coloured by status)."""
+           max_width: int = config.PREVIEW_MAX_WIDTH, show_detections: bool = True, show_scores: bool = False) -> bytes:
+    """Return JPEG bytes of the blurred, annotated frame (slots coloured by status).
+
+    ``show_scores`` prints each slot's score next to its number (the classifier engine's P(occupied))."""
     img = blur_boxes(frame, dets, inplace=False)
     overlay = img.copy()
     for s in status.slots:
@@ -34,6 +36,10 @@ def render(frame: np.ndarray, status: CameraStatus, dets: list[Detection], assig
         label = f"{s.index}"
         cv2.putText(img, label, (cx - 8, cy + 6), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 4)
         cv2.putText(img, label, (cx - 8, cy + 6), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        if show_scores:   # small probability under the number, staggered so narrow slots do not overlap
+            sy = cy + 24 + (10 if s.index % 2 else 0)
+            cv2.putText(img, f"{s.score:.2f}", (cx - 12, sy), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 3)
+            cv2.putText(img, f"{s.score:.2f}", (cx - 12, sy), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
     if show_detections:
         for i, d in enumerate(dets):
             x1, y1, x2, y2 = [int(round(v)) for v in d.box]

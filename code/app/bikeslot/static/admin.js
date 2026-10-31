@@ -82,6 +82,7 @@ const PULL_PICTURE_S = 10;
 const HOT_LIMIT_C = 75;
 const DETECTOR_TIMEOUT_S = 15;
 const DEMO_EVERY_S = 5;
+const VISION_POLL_S = 3; // VISION_POLL_S of the app, the status does not report it
 
 /* Lanes inside each step, parts in the order they happen: [id, label], a third item true marks a planned part.
    The first lane is the picture lane on the line the arrows use; a quieter second lane runs below it. joins: the side
@@ -166,7 +167,8 @@ function flowNodes(status) {
   const healthModel = d.info.model ?? "unknown";
   const model = r.model ?? healthModel;
   const sources = new Set(real.map((c) => c.source).filter(Boolean));
-  const mode = sources.size === 2 ? "mixed" : sources.has("pull") ? "pull" : sources.has("push") ? "push" : null;
+  const mode = sources.size >= 2 ? "mixed" : sources.has("pull") ? "pull" : sources.has("push") ? "push" : sources.has("vision") ? "vision" : null;
+  const visionRacks = cams.filter((c) => c.vision);
   const readings = [
     temps.length ? `${Math.round(Math.max(...temps))} C` : "",
     signals.length ? `${Math.min(...signals)} dBm` : "",
@@ -175,6 +177,7 @@ function flowNodes(status) {
   const realWords = {
     pull: `pull: the app asks (health ${PULL_HEALTH_S} s, picture ${PULL_PICTURE_S} s)`,
     push: "push: the node posts by itself",
+    vision: "vision service: the laptop keeps the camera, the app reads the decided spaces",
     mixed: real.filter((c) => c.source).map((c) => `${c.rack} ${c.source}`).join(", "),
   };
 
@@ -191,6 +194,7 @@ function flowNodes(status) {
   const howCamera = {
     pull: `The real camera is asked by the app (pull): every ${PULL_HEALTH_S} s for its health (chip temperature, WiFi signal, memory, uptime) and every ${PULL_PICTURE_S} s for a picture, the picture only after a good health answer in the same round.`,
     push: "The real camera posts a picture and an alive message to the app by itself (push).",
+    vision: `The real camera is kept by the vision service on the vision laptop: the service fetches the pictures itself, decides free or taken per hook (slot classifier, smoothed over a few frames) and the app only reads the decided spaces, every ${VISION_POLL_S} s or pushed by the service. No picture reaches the app on this path.`,
     mixed: `Some real cameras are asked by the app (pull: health every ${PULL_HEALTH_S} s, a picture every ${PULL_PICTURE_S} s after a good health answer), others post a picture and an alive message by themselves (push).`,
   };
   return {
@@ -201,7 +205,9 @@ function flowNodes(status) {
           ? ["node posts", ["picture and alive", ""], ["", "node posts a", "picture and alive"]]
           : mode === "mixed"
             ? ["pull and push", ["picture and health", ""], ["", "pull: app asks", "push: node posts"]]
-            : ["picture, health", ["", ""], ["", "picture, health", ""]],
+            : mode === "vision"
+              ? ["decided spaces", ["from the vision service,", "no picture"], ["", "vision service:", "decided spaces"]]
+              : ["picture, health", ["", ""], ["", "picture, health", ""]],
       fake
         ? ["picture", ["to the built-in", "stand-in"], ["", "picture in memory,", "to the stand-in"]]
         : ["picture", ["real racks only,", "held in memory"], ["", "real racks only,", "held in memory"]],
@@ -211,7 +217,7 @@ function flowNodes(status) {
     camera: {
       state: camera[0],
       label: camera[1],
-      sub: { pull: "ESP32-S3, app asks", push: "ESP32-S3, it posts", mixed: "pull and push" }[mode] ?? "ESP32-S3 board",
+      sub: { pull: "ESP32-S3, app asks", push: "ESP32-S3, it posts", vision: "via vision service", mixed: "pull and push" }[mode] ?? "ESP32-S3 board",
       title: "Camera node (ESP32-S3)",
       text: `${howCamera[mode] ?? "No real camera has been heard from yet."} The heat guard runs on the board: above the hot limit it stops taking pictures. When the node sends no too-hot flag, the app works it out from the temperature (${HOT_LIMIT_C} C).${demo ? ` Demo racks have no camera: the demo driver posts a made-up picture and an alive message every ${DEMO_EVERY_S} s (push).` : ""}`,
       live: [
@@ -226,8 +232,8 @@ function flowNodes(status) {
       ],
       labels: {
         capture: mode === "pull" ? "take picture if health ok" : "take picture",
-        send: { pull: "app fetches it", push: "node posts it" }[mode] ?? "picture out",
-        alive: { pull: "health answer", push: "alive message" }[mode] ?? "health or alive",
+        send: { pull: "app fetches it", push: "node posts it", vision: "vision service decides" }[mode] ?? "picture out",
+        alive: { pull: "health answer", push: "alive message", vision: "status answer" }[mode] ?? "health or alive",
       },
       notes: {
         mode: real.length ? `real camera, ${realWords[mode] ?? "not heard from yet"}` : "no real camera",
@@ -273,7 +279,7 @@ function flowNodes(status) {
       title: "Detector (recognition service)",
       text: `${fake
         ? "Built-in stand-in, no recognition: the app is set to use its stand-in for every rack (detector mode fake), so nothing is recognised. The stand-in makes up taken or free per space from the picture's bytes."
-        : `A real rack's picture goes to the recognition service (POST /analyze, ${DETECTOR_TIMEOUT_S} s timeout). It finds bikes with a pre-trained model, matches them to the slot boxes drawn once per camera and answers taken, free or unsure per space with a confidence. People are never reported; blurring them before recognition is being built, not running yet. Demo racks never reach it: the app's built-in stand-in reads their made-up pictures.`} The health check is separate: it runs only when this admin page asks, at most every 5 s. The last error is a status, not a step.`,
+        : `A real rack's picture goes to the recognition service (POST /analyze, ${DETECTOR_TIMEOUT_S} s timeout). It finds bikes with a pre-trained model, matches them to the slot boxes drawn once per camera and answers taken, free or unsure per space with a confidence. People are never reported; blurring them before recognition is being built, not running yet. Demo racks never reach it: the app's built-in stand-in reads their made-up pictures.`} The health check is separate: it runs only when this admin page asks, at most every 5 s. The last error is a status, not a step.${visionRacks.length ? ` Racks with a vision block (${visionRacks.map((c) => c.rack).join(", ")}) never come here either: the vision service on the laptop decides their spaces and the app reads them (see the camera cards).` : ""}`,
       live: [
         ["Mode", fake ? "fake (built-in stand-in, no recognition)" : esc(d.url)],
         ["Reachable", d.reachable ? "yes" : `<span class="error">no: ${esc(d.error ?? "")}</span>`],
@@ -736,7 +742,39 @@ const MORE_ICONS = {
   push: '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M5 9V1.5M2 4.5l3-3 3 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   pull: '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M5 1v7.5M2 5.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   reboot: '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M8.6 5.4A3.6 3.6 0 1 1 5 1.4h1.4M5.2 0l1.6 1.4L5.2 2.8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  vision: '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 5c1.2-2.2 2.5-3.2 4-3.2S7.8 2.8 9 5c-1.2 2.2-2.5 3.2-4 3.2S2.2 7.2 1 5z" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="5" cy="5" r="1.4" fill="currentColor"/></svg>',
 };
+const PREVIEW_EVERY_S = 3;
+
+/* A rack decided by the vision service: what the service reports for its camera, then the app's own view */
+function visionLine(v, rack) {
+  const where = v.how === "pull" ? `asked every ${v.poll_s} s at ${esc(v.url)}` : "pushed by the service";
+  if (v.updated_at === undefined) return `<b>Vision service</b>, camera ${esc(v.camera)}, ${where}: nothing received yet`;
+  const counts = v.slot_count ? `${v.free} free, ${v.occupied} taken${v.unknown ? `, ${v.unknown} unknown` : ""} of ${v.slot_count} hooks` : "no slot layout on the service yet";
+  const frame = v.frame_age_s === null || v.frame_age_s === undefined ? "no frame yet" : `frame ${ago(v.frame_age_s)}`;
+  const notes = [v.online === false ? "camera offline at the service" : "", v.message, v.warning].filter(Boolean).map(esc).join("; ");
+  const own = rack ? `. App: ${rack.status === "ok" ? `${rack.free} free` : rack.status}, last result ${ago(rack.age_s)}` : "";
+  return `<b>Vision service</b>, camera ${esc(v.camera)}, ${where}: ${counts}, ${frame}${v.processing_ms ? `, ${Math.round(v.processing_ms)} ms` : ""}${notes ? `. ${notes}` : ""}${own}`;
+}
+
+/* The service's last preview (persons blurred there), fetched through the app; the src changes, the img stays */
+function renderPreview(card, c, now) {
+  const box = card.querySelector('[data-f="preview"]');
+  if (!c.vision || !c.vision.preview) {
+    if (box.firstChild) box.innerHTML = "";
+    return;
+  }
+  let img = box.querySelector("img");
+  if (!img) {
+    box.innerHTML = '<img alt="Last picture as the vision service sees it: persons blurred, hooks coloured free or taken" loading="lazy">';
+    img = box.querySelector("img");
+    img._at = 0;
+  }
+  if (now - img._at >= PREVIEW_EVERY_S) {
+    img._at = now;
+    img.src = `/api/vision/${encodeURIComponent(c.rack)}/preview.jpg?t=${Date.now()}`;
+  }
+}
 const icon = (kind, name) => `<i class="ico ico-${kind}">${ICONS[name]}</i>`;
 
 function field(root, name, html) {
@@ -938,6 +976,7 @@ function renderDetector(status) {
   if (!box.dataset.built) {
     box.innerHTML = `<div class="health-head"><p data-f="chip"></p><p class="health-mode" data-f="mode"></p></div>
       <div class="health-facts"><p><span class="k">Model</span><b data-f="model"></b></p><p><span class="k">Last result</span><b data-f="ok"></b></p></div>
+      <p class="health-vision" data-f="vision" hidden></p>
       <div class="health-latency"><p class="k">Latency, last 5 minutes</p><div data-f="spark"></div><p class="health-now" data-f="lat"></p></div>
       <p class="card-error" hidden>${ICONS.square}<span></span></p>`;
     box.dataset.built = "1";
@@ -949,6 +988,8 @@ function renderDetector(status) {
   field(box, "ok", ago(r.ok_age_s));
   field(box, "spark", trendSvg(trends.latency, status.generated_at, ACTIVITY_S, Math.max(10, ...trends.latency.map((p) => p.v)), "Latency, last 5 minutes", " ms"));
   field(box, "lat", r.last_latency_ms === null ? "no call yet" : `last call ${r.last_latency_ms} ms`);
+  const vision = status.cameras.filter((c) => c.vision).map((c) => `${esc(c.rack)}: ${c.vision.how === "pull" ? esc(c.vision.url) : "pushed by the service"}, camera ${esc(c.vision.camera)}, ${c.online ? "answering" : "silent"}`).join("; ");
+  field(box, "vision", vision ? `<span class="k">Vision service (decides its racks on the laptop)</span><br>${vision}` : "").hidden = !vision;
   errorLine(box.querySelector(".card-error"), r.last_error ?? d.error, r.last_error ? r.error_age_s : null);
 }
 
@@ -969,6 +1010,7 @@ function cameraSkeleton(c) {
     </div>
     <div class="uptime"><div class="uptime-bar"><div class="uptime-fill"></div><span class="uptime-reboot" hidden>${MORE_ICONS.reboot}</span></div><p class="uptime-text" data-f="uptime"></p></div>
     <p class="card-detect" data-f="detect"></p>
+    <div class="card-preview" data-f="preview"></div>
     <p class="card-foot"><span data-f="node"></span><span class="tag" data-f="source"></span><span><b class="pictures">0</b> pictures</span><span data-f="seen"></span></p>
     <p class="card-error" hidden>${ICONS.square}<span></span></p>`;
 }
@@ -1022,13 +1064,17 @@ function renderCameras(status, rose) {
     field(card, "node", esc(c.node_id ?? "unknown node"));
     const source = card.querySelector('[data-f="source"]');
     field(card, "source", c.source ? `${MORE_ICONS[c.source] ?? ""}${esc(c.source)}` : "");
-    source.title = c.source === "pull" ? "The server fetches pictures from the node" : c.source === "push" ? "The node sends its pictures" : "";
+    source.title = c.source === "pull" ? "The server fetches pictures from the node" : c.source === "push" ? "The node sends its pictures"
+      : c.source === "vision" ? "The vision service on the laptop decides the spaces; the app reads them" : "";
     roll(card.querySelector(".pictures"), c.pictures);
     const bytes = c.last_picture_bytes;
     field(card, "seen", `last ${ago(c.picture_age_s)}${bytes ? `, ${bytes < 1024 ? `${bytes} B` : `${Math.round(bytes / 1024)} KB`}` : ""}`);
-    field(card, "detect", !rack ? "" : rack.mode === "slots" ? `<b>By space</b>, ${rack.slots_ready} of ${rack.slots_observed} spaces ready, last result ${ago(rack.age_s)}`
+    field(card, "detect", c.vision ? visionLine(c.vision, rack) : !rack ? "" : rack.mode === "slots" ? `<b>By space</b>, ${rack.slots_ready} of ${rack.slots_observed} spaces ready, last result ${ago(rack.age_s)}`
       : rack.mode === "count" ? `<b>By count</b>, last result ${ago(rack.age_s)}` : "No detection yet");
-    card.querySelector('[data-f="detect"]').title = `A space is ready once it has a full window of ${status.app.free_after_clean} pictures`;
+    card.querySelector('[data-f="detect"]').title = c.vision
+      ? "What the vision service reports for this rack's camera; the app shows its decided spaces as they are"
+      : `A space is ready once it has a full window of ${status.app.free_after_clean} pictures`;
+    renderPreview(card, c, now);
     errorLine(card.querySelector(".card-error"), c.last_error, c.error_age_s);
     if (rose.has(c.rack)) pulse(card);
   });

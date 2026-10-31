@@ -20,6 +20,10 @@ class Settings:
     history_file: str | None = None
     # Place search for the user page; GEOCODER_URL= (empty) turns it off
     geocoder_url: str = "https://nominatim.openstreetmap.org/search"
+    # Racks with a `vision` block: how often the app asks the vision service for the decided spaces, and the shared
+    # secret the service must send when it pushes them instead (X-Vision-Token); empty = no token needed
+    vision_poll_s: float = 3.0
+    vision_token: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -35,4 +39,6 @@ class Settings:
             hot_limit_c=float(env("HOT_LIMIT_C", cls.hot_limit_c)),
             history_file=env("HISTORY_FILE", "data/history.json") or None,
             geocoder_url=env("GEOCODER_URL", cls.geocoder_url),
+            vision_poll_s=float(env("VISION_POLL_S", cls.vision_poll_s)),
+            vision_token=env("VISION_TOKEN", cls.vision_token),
         )
