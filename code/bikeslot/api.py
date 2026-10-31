@@ -3,7 +3,7 @@
 Run from the repo root:
     .venv/Scripts/python -m uvicorn --app-dir code bikeslot.api:app --host 0.0.0.0 --port 8000
 
-Interactive docs: http://localhost:8000/docs
+Interactive docs: http://localhost:8000/docs   showcase: http://localhost:8000/demo
 
 Contract for the ESP32 team:  POST /cameras/{camera_id}/frames  with Content-Type: image/jpeg and the
 JPEG bytes as body (multipart "file" also works).  Contract for the frontend: GET /sites,
@@ -27,7 +27,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 
-from . import __version__, config, detector, vlm
+from . import __version__, config, demo, detector, pull, vlm
 from .geometry import denormalize, normalize, resize_max_side
 from .occupancy import analyze_frame
 from .preview import blurred_jpeg, render
@@ -51,12 +51,18 @@ async def lifespan(app: FastAPI):
 
     from . import stands
     threading.Thread(target=stands._load, name="stands-warmup", daemon=True).start()
+    pull.start(_ingest)
+    if config.DEMO_PREWARM:
+        threading.Thread(target=demo.prewarm, name="demo-warmup", daemon=True).start()
     yield
+    pull.stop_all()
 
 
 app = FastAPI(title="bikeslot", version=__version__, lifespan=lifespan,
               description="Bicycle parking slot occupancy from camera snapshots (BaselHack 2026, team NextGen)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+demo.bind(store.lock)
+app.include_router(demo.router)
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -87,6 +93,11 @@ def _process(cam: CameraState, img: np.ndarray) -> CameraStatus:
         store.record_status(cam, res.status, res.detections)
         (store.preview_dir / f"{cam.camera_id}.jpg").write_bytes(cam.preview_jpeg)
         return store.current_status(cam)
+
+
+def _ingest(camera_id: str, data: bytes) -> CameraStatus:
+    """Pull-mode entry point (worker thread): same path as POST /cameras/{id}/frames."""
+    return _process(store.get_or_create(camera_id), _decode(data))
 
 
 def _layout_pixels(layout: Layout, frame_size: Optional[list[int]] = None) -> dict:
@@ -123,12 +134,23 @@ async def post_frame(camera_id: str, request: Request):
     return await run_in_threadpool(_process, cam, img)
 
 
+@app.put("/cameras/{camera_id}/source", tags=["camera"])
+def set_source(camera_id: str, url: str = Query(..., description="snapshot URL to poll, e.g. http://192.168.21.95/snapshot; empty stops polling")):
+    """Let the service poll a camera's snapshot URL itself (pull mode), or stop polling with url=''."""
+    old = pull.pullers.pop(camera_id, None)
+    if old:
+        old.stop.set()
+    if url:
+        pull.start(_ingest, f"{camera_id}={url}")
+    return pull.info()
+
+
 # ----------------------------------------------------------------------------- read
 
 @app.get("/health", tags=["service"])
 def health():
     return {"ok": True, "version": __version__, "detector": detector.info(), "cameras": len(store.cameras),
-            "vlm": vlm.info(), "time": utcnow()}
+            "vlm": vlm.info(), "pull": pull.info(), "time": utcnow()}
 
 
 @app.get("/cameras", response_model=list[CameraInfo], tags=["camera"])
