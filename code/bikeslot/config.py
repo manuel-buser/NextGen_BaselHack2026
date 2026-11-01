@@ -80,6 +80,13 @@ BLUR_VAR_MIN = _env("BLUR_VAR_MIN", 30.0)       # Laplacian variance below this 
 OFFLINE_AFTER_S = _env("OFFLINE_AFTER_S", 60.0)
 RING_BUFFER = _env("RING_BUFFER", 10)           # raw frames kept in RAM per camera (calibration)
 
+# --- vehicle detectors (vehicles.py): which model finds parked vehicles ---------------------------------------
+VEHICLE_DETECTOR = _env("VEHICLE_DETECTOR", "yolo")   # yolo (YOLO11 above, bicycle/motorcycle) | dino (open vocabulary)
+DINO_MODEL = _env("DINO_MODEL", "IDEA-Research/grounding-dino-tiny")
+VEHICLE_PROMPT = _env("VEHICLE_PROMPT", "a bicycle. an e-bike. a cargo bike. a kick scooter. a motorcycle.")
+DINO_BOX_THRESHOLD = _env("DINO_BOX_THRESHOLD", 0.2)   # 2026-11-01 sweep: 0.20 kept the 30 live01 pictures exact and found 39/41 Memox bikes
+DINO_TEXT_THRESHOLD = _env("DINO_TEXT_THRESHOLD", 0.2)
+VEHICLE_NMS_IOU = _env("VEHICLE_NMS_IOU", 0.5)        # boxes overlapping more than this are one vehicle
 # --- registration (registration.py): warp each picture onto the reference frame of its layout ----------------
 # Limits measured on the 2026-11-01 night frames of live01: the rack registered with 55-121 agreeing matches,
 # scale 0.87-1.15, rotation <= 7 deg, perspective <= 0.0005; other scenes gave <= 7 matches and rotations of 60+ deg.

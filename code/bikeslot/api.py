@@ -34,7 +34,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 
-from . import __version__, config, demo, detector, forward, pull, registration, vlm
+from . import __version__, config, demo, detector, forward, pull, registration, vehicles, vlm
 from .geometry import denormalize, normalize, resize_max_side
 from .occupancy import analyze_frame
 from .preview import blurred_jpeg, render
@@ -192,7 +192,8 @@ def health():
 
     return {"ok": True, "version": __version__, "detector": detector.info(), "cameras": len(store.cameras),
             "vlm": vlm.info(), "pull": pull.info(), "forward": forward.info(), "engine": config.ENGINE,
-            "slot_classifier": slotcls_model.info(), "registration": _registration_info(), "time": utcnow()}
+            "slot_classifier": slotcls_model.info(), "registration": _registration_info(),
+            "vehicle_detectors": vehicles.info(), "time": utcnow()}
 
 
 def _registration_info() -> dict:
