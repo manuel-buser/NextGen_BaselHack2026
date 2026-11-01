@@ -36,3 +36,5 @@ assets/pictures/EndressPictures/
 
 # YOLOE text encoder (downloaded by ultralytics)
 mobileclip*.ts
+# unfinished downloads of model files
+*.part
