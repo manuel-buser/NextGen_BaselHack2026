@@ -104,8 +104,11 @@ DEMO_PREWARM = _env("DEMO_PREWARM", True)   # compute the /demo example images i
 # --- pull mode ---------------------------------------------------------------
 # cameras the service polls itself: "cam_id=url,cam_id2=url2" (empty string disables pulling)
 PULL_CAMERAS = _env("PULL_CAMERAS", "live01=http://192.168.21.95/snapshot")
-PULL_INTERVAL = _env("PULL_INTERVAL", 5.0)     # seconds between snapshots per camera
+PULL_INTERVAL = _env("PULL_INTERVAL", 1.0)     # seconds between snapshots per camera
 PULL_TIMEOUT = _env("PULL_TIMEOUT", 10.0)
+PULL_VIEW_KEY = _env("PULL_VIEW_KEY", "")      # the relay's view key, sent as X-View-Key (keeps it out of the URL); .env, never committed
+PULL_MAX_AGE_S = _env("PULL_MAX_AGE_S", 60.0)  # a picture older than this (X-Snapshot-Age-S from the relay) is not used: the camera stopped
+PULL_HEALTH = _env("PULL_HEALTH", True)        # also read /health next to /snapshot (relay: online, last seen; camera: temperature, wifi)
 
 # --- slot classifier (second approach: fixed slot polygons + per-crop CNN, see documentation/slot-classifier.md)
 ENGINE = _env("ENGINE", "detector")      # "detector" = YOLO + geometry (occupancy.py); "classifier" = slotcls per-crop CNN

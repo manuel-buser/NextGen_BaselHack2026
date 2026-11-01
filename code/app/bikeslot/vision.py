@@ -16,6 +16,7 @@ import time
 import httpx
 from fastapi import FastAPI
 
+from .ingest import node_report
 from .poller import describe
 from .state import FREE, TAKEN, Rack, VisionSource
 
@@ -24,7 +25,7 @@ UNSURE = "unknown"  # the service has no decision for the slot: counted as occup
 log = logging.getLogger(__name__)
 STATUS_TIMEOUT_S = 5.0
 STATES = {"free": FREE, "occupied": TAKEN, "unknown": UNSURE}
-SUMMARY_KEYS = ("online", "frame_age_s", "updated_at", "layout_status", "slot_count", "free", "occupied", "unknown", "processing_ms", "message")
+SUMMARY_KEYS = ("online", "frame_age_s", "updated_at", "layout_status", "slot_count", "free", "occupied", "unknown", "processing_ms", "message", "source")
 
 
 def all_taken(capacity: int, decided: dict[int, str] | None = None) -> dict:
@@ -80,15 +81,18 @@ def untracked(store, rack: Rack, now: float) -> None:
 def ingest_vision(app: FastAPI, rack: Rack, status, now: float) -> tuple[dict, int]:
     """One CameraStatus from the service, polled or pushed. The service counts as alive. A status with a new
     `updated_at` is a frame decided on the laptop: its decided slots go through the rack (window 1, the service has
-    smoothed already). A camera the service reports offline makes every space occupied, on every status, so the
-    rack never shows free spaces it cannot see. Returns the reply body and HTTP status the push endpoint answers
+    smoothed already). A camera the service reports offline, or whose last picture is older than STALE_AFTER_S,
+    makes every space occupied, on every status, so the rack never shows free spaces it cannot see. The `source`
+    block (what the service learned from the relay / the camera: temperature, WiFi, uptime) fills the camera
+    card like a node's own health report. Returns the reply body and HTTP status the push endpoint answers
     with."""
     store = app.state.store
     node = rack.vision.node_id
     if not isinstance(status, dict):
         store.note_camera_error(rack, "vision: the body is not a status object", now)
         return {"ok": False, "error": "expected the CameraStatus JSON of the vision service"}, 400
-    store.note_alive(rack, {}, node, now, "vision")
+    source = status.get("source") if isinstance(status.get("source"), dict) else {}
+    store.note_alive(rack, node_report(source, store.settings.hot_limit_c), node, now, "vision")
     stamp = status.get("updated_at")
     fresh = stamp is not None and stamp != rack.vision_seen
     result, warning = vision_result(status, rack.capacity)
@@ -99,8 +103,9 @@ def ingest_vision(app: FastAPI, rack: Rack, status, now: float) -> tuple[dict, i
     def reply(applied: bool) -> tuple[dict, int]:
         return {"ok": True, "rack": rack.id, "free": rack.free, "capacity": rack.capacity, "status": rack.status(store.settings, now), "applied": applied}, 200
 
-    if status.get("online") is False:
-        untracked(store, rack, now)
+    age = status.get("frame_age_s")
+    if status.get("online") is False or (isinstance(age, (int, float)) and age > store.settings.stale_after_s):
+        untracked(store, rack, now)   # no picture, or an old one: never shown as free spaces
         return reply(True)
     if not fresh:
         return reply(False)

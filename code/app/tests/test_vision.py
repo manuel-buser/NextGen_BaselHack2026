@@ -161,6 +161,26 @@ def test_offline_camera_shows_the_rack_full_on_every_status(tmp_path):
         assert (client.get("/api/racks/A").json()["free"], client.get("/api/racks/A").json()["tracking"]) == (13, True)
 
 
+def test_old_pictures_show_the_rack_full_and_the_source_fills_the_camera_card(tmp_path):
+    with TestClient(vision_app(tmp_path, "{camera: live01}", stale_after_s=10)) as client:
+        assert client.post("/api/vision/A/status", json=status_json()).json()["free"] == 13
+        # the service is up but its last picture is old (the camera stopped sending): full, not tracked live
+        old = {**status_json(updated_at="2026-11-01T08:00:05+00:00"), "frame_age_s": 95.0}
+        reply = client.post("/api/vision/A/status", json=old).json()
+        assert (reply["free"], reply["applied"]) == (0, True) and client.get("/api/racks/A").json()["tracking"] is False
+        # what the service learned from the relay reaches the admin page and the camera card's instruments
+        src = {"kind": "relay", "online": True, "camera_id": "cam01", "last_seen_s": 0.3, "snapshot_age_s": 0.4, "state": "ok",
+               "last_error": None, "temperature_c": 55.3, "wifi_rssi_dbm": -41, "wifi_connected": True, "uptime_s": 459}
+        client.post("/api/vision/A/status", json={**status_json(updated_at="2026-11-01T08:00:10+00:00"), "source": src})
+        camera = camera_of(client)
+        assert camera["vision"]["source"] == src and client.get("/api/racks/A").json()["tracking"] is True
+        assert (camera["temp_c"], camera["too_hot"], camera["node"]["wifi_rssi_dbm"], camera["node"]["uptime_s"], camera["node"]["wifi_connected"]) == (55.3, False, -41, 459, True)
+        # the relay has not heard from the camera: the service says offline, the rack goes grey at once
+        silent = {**status_json(updated_at="2026-11-01T08:00:15+00:00"), "online": False, "source": {**src, "online": False, "last_seen_s": 40.0}}
+        assert client.post("/api/vision/A/status", json=silent).json()["free"] == 0
+        assert camera_of(client)["online"] is False and camera_of(client)["vision"]["source"]["last_seen_s"] == 40.0
+
+
 def test_pull_round_reads_the_service_and_the_rack_shows_its_spaces(tmp_path):
     fake = make_fake_vision(capacity=CAPACITY, occupied=OCCUPIED, frame_s=1000)  # one frame, until the rehearsal endpoints force a new one
     with TestClient(vision_app(tmp_path)) as client:
