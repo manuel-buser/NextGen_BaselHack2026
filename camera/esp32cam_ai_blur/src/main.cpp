@@ -386,7 +386,7 @@ static bool camera_start()
     c.pin_reset = RESET_GPIO_NUM;
     c.xclk_freq_hz = 20000000;
     c.pixel_format = PIXFORMAT_RGB565;  // raw pixels: the detector reads them, the blur edits them
-    c.frame_size = FRAMESIZE_VGA;       // 640x480
+    c.frame_size = FRAMESIZE_SVGA;      // 800x600: the largest raw RGB565 size that fits with the AI blur
     c.fb_count = 2;                     // two buffers + GRAB_LATEST: every grab is a current frame
     c.fb_location = CAMERA_FB_IN_PSRAM;
     c.grab_mode = CAMERA_GRAB_LATEST;
