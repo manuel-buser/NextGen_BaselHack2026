@@ -256,3 +256,20 @@ def test_vision_poll_task_starts_with_the_app_unless_push_only_or_turned_off(tmp
     path.write_text("racks:\n  - {id: A, name: Vision rack, capacity: 4, vision: {camera: live01}}\n", encoding="utf-8")
     with TestClient(create_app(Settings(racks_file=str(path), detector_url="fake"))) as client:
         assert client.app.state.poll_tasks == []
+
+
+def test_stage_pictures_are_fetched_through_the_app(tmp_path):
+    seen = []
+
+    def vision(request):
+        seen.append(request.url.path)
+        if request.url.path.endswith("/stages"):
+            return httpx.Response(200, json={"hooks": {"free": 16}})
+        return httpx.Response(200, content=b"jpeg", headers={"content-type": "image/jpeg"})
+
+    with TestClient(vision_app(tmp_path)) as client:
+        client.app.state.vision_http = httpx.AsyncClient(transport=httpx.MockTransport(vision))
+        assert client.get("/api/vision/A/stage/hooks.jpg").content == b"jpeg"
+        assert client.get("/api/vision/A/stages").json() == {"hooks": {"free": 16}}
+        assert client.get("/api/vision/A/stage/other.jpg").status_code == 404   # only the three steps are passed on
+        assert seen == ["/cameras/live01/stage/hooks.jpg", "/cameras/live01/stages"]

@@ -1,11 +1,8 @@
 """Pydantic models shared by the pipeline, the REST API and the scripts.
 
-Coordinate conventions
-----------------------
-* Layout polygons/rows are stored NORMALISED (0..1) relative to ``frame_size`` so that the same layout
-  works for 1600x1200 stills and 800x600 streams.  The API additionally returns pixel polygons.
-* Polygon vertex order for a slot: back-left, back-right, front-right, front-left (as in golden_labels.json).
-* Detections are in pixel coordinates of the working frame (longer side == config.MAX_SIDE).
+* Layout polygons/rows are stored normalised (0..1) to ``frame_size``; the API also returns pixel polygons.
+* Slot polygon vertex order: back-left, back-right, front-right, front-left (as in golden_labels.json).
+* Detections are in pixels of the working frame (longer side == config.MAX_SIDE).
 """
 from __future__ import annotations
 
@@ -146,6 +143,7 @@ class CameraStatus(BaseModel):
     preview_url: Optional[str] = None
     message: str = ""
     source: Optional[dict] = Field(default=None, description="pull mode: the camera / relay as the puller sees it: kind (relay|camera), online, last_seen_s, snapshot_age_s, state, last_error, temperature_c, wifi_rssi_dbm, ...")
+    allocation: Optional[dict] = Field(default=None, description="layout.params.allocation: the vehicle detector's vehicles in the rack area, the clusters of high-scoring hooks, which hook each vehicle claimed, and the hooks taken")
     registration: Optional[dict] = Field(default=None, description="the picture warped onto the layout's reference frame: ok, reason, model, matches, inliers, scale, rotation_deg, shift_px, perspective, ms; null without a reference")
 
 

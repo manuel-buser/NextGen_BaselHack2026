@@ -1,18 +1,7 @@
-"""Rack anchor detection: one fixed stand / stirrup / wheel holder per slot.
+"""Rack anchor detection: one fixed stand / stirrup / wheel holder per slot (calibration, best effort).
 
-Open-vocabulary text prompts alone are weak on thin metal stands, but YOLOE's *visual* prompting is not:
-given one example box it finds the look-alikes with high confidence, including stands half hidden behind
-bikes.  Pipeline per calibration:
-
-1. text prompts ("bicycle stand", ...) at a low threshold -> exemplar candidates; anything overlapping a
-   YOLO11 bicycle/motorcycle box is discarded (the text prompt loves to box bikes);
-2. the best exemplar becomes a visual prompt -> stand boxes on every buffered frame;
-3. boxes are clustered along the row (one cluster per stand), weak clusters dropped;
-4. the caller (calibrate.py) fits a 1-D projective lattice to them, which places the stands hidden behind
-   bikes at the missing integer positions.
-
-Returns the detected anchors in image pixels of the working frame.  Everything is best effort: on failure the caller
-falls back to bikes-only calibration.
+Text prompts are weak on thin stands, so the best text-prompt exemplar (not overlapping a bike box) becomes a YOLOE
+visual prompt for all buffered frames; boxes are clustered along the row. Returns anchors in working-frame pixels.
 """
 from __future__ import annotations
 
@@ -161,7 +150,7 @@ def detect_stands(frames: list[np.ndarray], vehicles_per_frame: list[list[Detect
     if n_detected < 2:
         return None
 
-    # hidden stands are no longer invented here: calibrate.py fits a projective lattice to the detected ones
+    # hidden stands are not invented here: calibrate.py fits a projective lattice to the detected ones
     notes = f"stands: exemplar conf {exemplar[1]:.2f} (text prompt), {n_detected} detected by visual prompt"
     return {"anchors": anchors, "exemplar": exemplar[0], "notes": notes, "detected": n_detected}
 
@@ -175,11 +164,8 @@ def pitch_estimate(xs: list[float]) -> float:
 
 
 def _fill_gaps(anchors: list[dict]) -> list[dict]:
-    """Insert inferred anchors where a gap spans k > 1 pitches (stands hidden behind bikes).
-
-    The pitch varies along the row (perspective), so k is chosen so that gap/k is closest to the clean
-    gaps right next to it, not to a global median.
-    """
+    """Insert inferred anchors where a gap spans k > 1 pitches (stands hidden behind bikes). The pitch varies with
+    perspective, so k makes gap/k closest to the neighbouring clean gaps, not to a global median."""
     anchors = sorted(anchors, key=lambda a: a["x"])
     if len(anchors) < 3:
         return anchors

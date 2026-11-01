@@ -407,3 +407,15 @@ h1, h2 { text-wrap: balance; }
   .team { order: -2; flex-basis: calc(100% - 64px); }
   .theme-toggle { order: -1; width: 40px; height: 40px; }
 }
+
+/* Admin tabs: Camera (three live pictures of the processing) and Statistics. */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--hairline); }
+.tab { font-family: var(--display); font-weight: 600; font-size: 1.0625rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); background: none; border: 0; border-bottom: 3px solid transparent; padding: 8px 14px; cursor: pointer; }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.stages { display: grid; gap: 24px; }
+.stage { display: grid; gap: 10px; background: var(--surface); border: 1px solid var(--ring); border-radius: 14px; padding: 14px 16px; min-width: 0; }
+.stage h2 { font-family: var(--display); font-weight: 600; font-size: 1.25rem; letter-spacing: 0.06em; text-transform: uppercase; }
+.stage img { width: 100%; max-width: 960px; aspect-ratio: 4 / 3; object-fit: contain; background: #000; border-radius: 10px; }
+.stage-chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 24px; }
+.stage-line { color: var(--ink-2); max-width: 70ch; }

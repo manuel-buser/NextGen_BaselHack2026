@@ -1,14 +1,8 @@
 """Align every picture of a camera onto its reference frame, so a slot layout drawn once survives camera bumps.
 
-The reference is the frame the layout was drawn on.  Per picture: SIFT keypoints + descriptors, ratio-test
-matches against the reference, a RANSAC homography (similarity transform as fallback), plausibility checks, then
-``cv2.warpPerspective`` onto the reference frame; the fixed slot polygons fit the warped picture.
-
-Features are found at ``REG_WORK_WIDTH`` (320 px, half the camera's 640 x 480 picture) after a contrast boost
-(CLAHE), with burnt-out pixels (lamps) masked: only structure that survives halving the picture is used (pillars,
-rail, graffiti, windows), never pixel noise or JPEG blocks, and a 320 x 240 picture registers as well.
-
-Privacy: a ``Reference`` holds keypoint positions and descriptors only, never pixels; that is what goes to disk.
+SIFT + ratio test + RANSAC homography (similarity as fallback), plausibility checks, then warpPerspective.
+Features are found at REG_WORK_WIDTH (half the 640 px camera picture) after CLAHE, lamps masked, so only coarse
+structure is matched. Privacy: a ``Reference`` holds keypoints and descriptors only, never pixels.
 """
 from __future__ import annotations
 

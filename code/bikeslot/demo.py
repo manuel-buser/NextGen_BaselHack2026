@@ -1,15 +1,7 @@
-"""Showcase page at /demo: live camera + annotated example images explaining what works so far.
+"""Showcase page at /demo: live camera + annotated example images from ``assets/pictures`` (cached, pre-warmed).
 
-Examples are computed on the fly from the images in ``assets/pictures`` (cached in RAM, pre-warmed in the
-background at service start):
-  * classifier - every picture in assets/pictures/DemoPictures with a <name>.layout.json next to it (the fixed
-              slot polygons of the slot-classifier approach): per-slot free/occupied from the small CNN, compared
-              with <name>.labels.json where it exists
-  * golden  - hand-labelled layout, occupancy compared with the hand labels
-  * auto3   - the reference scene calibrated automatically from its 3 images (different occupancy each),
-              then occupancy of every image compared with the hand labels (no VLM, no admin)
-  * auto    - layout proposed automatically from that single image (stands + bikes, no VLM, no admin),
-              then occupancy on the same image
+Kinds: ``classifier`` (DemoPictures with a <name>.layout.json, compared with <name>.labels.json), ``golden`` (hand
+layout), ``auto3`` (reference scene calibrated from its 3 images) and ``auto`` (calibrated from the single image).
 """
 from __future__ import annotations
 
@@ -224,7 +216,7 @@ h1{font-size:28px;margin:0 0 4px}h2{font-size:20px;margin:36px 0 6px}p{margin:4p
 .live img{width:100%;border-radius:6px;display:block}.big{font-size:40px;font-weight:700;line-height:1.1}
 ul{margin:6px 0;padding-left:20px}code{font-size:13px;background:var(--line);padding:1px 5px;border-radius:4px}
 </style></head><body><main>
-<h1>bikeslot &mdash; Find my Bike Slot</h1>
+<h1>bikeslot: Find my Bike Slot</h1>
 <p class="muted">A camera photographs the bike rack every few seconds. The laptop finds the bikes, decides which numbered slots are taken, and tells the app how many are free.</p>
 
 <div class="steps">
@@ -240,27 +232,27 @@ ul{margin:6px 0;padding-left:20px}code{font-size:13px;background:var(--line);pad
 <p class="muted" id="live-sub">Pulled from the real camera (through the relay), checked every second.</p>
 <div id="live"></div>
 
-<h2>New approach &mdash; slots drawn once, a small CNN decides free / occupied per slot</h2>
+<h2>New approach: slots drawn once, a small CNN decides free / occupied per slot</h2>
 <p class="muted">The camera is fixed, so the slots never move: the 19 hooks of a bay (between two pillars) are drawn once as polygons (4 corners + "19", split in perspective; for the frontal phone pictures the row is found automatically from the rail and the hook pitch). Every snapshot is cut into one crop per slot, a MobileNetV3 classifier (ImageNet-pretrained, head trained on the labelled crops) says free or occupied, and the result is smoothed over the last frames. No bike detection, no slot counting. The number in each slot is the probability "occupied". The first picture is the camera's own view by day; the others are the phone pictures taken on site on the evening of 2026-10-31 (bays 2, 3 and 4). "correct" compares with the hand labels; the model was trained on all of these frames, so leave-one-frame-out (slot-classifier.md) is the honest number.</p>
 <div class="grid" id="classifier"></div>
 
-<h2>Example 1 &mdash; reference scene with hand-labelled slots</h2>
+<h2>Example 1: reference scene with hand-labelled slots</h2>
 <p class="muted">Slots drawn by hand once; every frame is decided automatically and compared with the hand labels.</p>
 <div class="grid" id="golden"></div>
 
-<h2>Example 2 &mdash; fully automatic: the reference scene calibrated from its 3 images</h2>
+<h2>Example 2: the reference scene calibrated fully automatically from its 3 images</h2>
 <p class="muted">No admin, no GPT: the camera saw the three images above (different bikes each time), the calibration fitted a perspective lattice to the stirrups, the painted lines and the bikes, and proposed the slots below. The occupancy of all three images is then compared with the hand labels.</p>
 <div class="grid" id="auto3"></div>
 
-<h2>Example 3 &mdash; fully automatic from one single image</h2>
+<h2>Example 3: fully automatic from one single image</h2>
 <p class="muted">No admin, no GPT: the slots below were proposed by the calibration from this one picture, then occupancy was computed on it. Rows with stands or painted bays get their empty slots right; very dense double racks remain estimates.</p>
 <div class="grid" id="auto"></div>
 
-<h2>Example 4 &mdash; real photos from the team's own rack (WhatsApp)</h2>
+<h2>Example 4: real photos from the team's own rack (WhatsApp)</h2>
 <p class="muted">No admin, no GPT, no hand labels: each photo gets its own automatically proposed layout and occupancy, same as Example 3.</p>
 <div class="grid" id="selfmade"></div>
 
-<h2>Example 5 &mdash; picks for the live demo</h2>
+<h2>Example 5: picks for the live demo</h2>
 <p class="muted">A curated handful of the photos above, same fully automatic pipeline.</p>
 <div class="grid" id="demo_picks"></div>
 

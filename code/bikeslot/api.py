@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Optional
 
 import cv2
@@ -37,7 +36,7 @@ from fastapi.responses import HTMLResponse, Response
 from . import __version__, config, demo, detector, forward, pull, registration, vehicles, vlm
 from .geometry import denormalize, normalize, resize_max_side
 from .occupancy import analyze_frame
-from .preview import blurred_jpeg, render
+from .preview import STAGES, blurred_jpeg, render, stages
 from .schemas import CameraInfo, CameraStatus, Layout, LayoutUpdate, SiteSummary, utcnow
 from .store import CameraState, Store
 
@@ -66,6 +65,7 @@ async def lifespan(app: FastAPI):
 
     from . import stands
     threading.Thread(target=stands._load, name="stands-warmup", daemon=True).start()
+    _preload_allocation()
     pull.start(_ingest, note=store.note_source)
     forward.start()
     if config.DEMO_PREWARM:
@@ -126,6 +126,13 @@ def _process(cam: CameraState, img: np.ndarray) -> CameraStatus:
             res = analyze_frame(cam.layout, cam.trackers, cam.cache, frame, cam.camera_id)
         store.push_frame(cam, res.frame)
         cam.preview_jpeg = render(res.frame, res.status, res.detections, res.assignments)
+        if _engine(cam) == "classifier":
+            cam.stage_jpegs, counts = stages(res.frame, res.status, res.detections, res.probs)
+            alloc = res.status.allocation or {}
+            counts["hooks"]["ms"] = res.timings.get("classifier_ms")
+            counts["bikes"].update(freed=alloc.get("freed", []), ms=alloc.get("ms"))
+            cam.stage_info = {"updated_at": res.status.updated_at, "aligned": (res.status.registration or {}).get("ok"),
+                              "processing_ms": res.status.processing_ms, **counts}
         cam.calibration_jpeg = blurred_jpeg(res.frame, res.detections, max_width=config.MAX_SIDE)
         store.record_status(cam, res.status, res.detections)
         (store.preview_dir / f"{cam.camera_id}.jpg").write_bytes(cam.preview_jpeg)
@@ -235,6 +242,24 @@ def camera_preview(camera_id: str):
     return Response(cam.preview_jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
+@app.get("/cameras/{camera_id}/stage/{name}.jpg", tags=["camera"])
+def camera_stage(camera_id: str, name: str):
+    """One step of the live processing (camera | hooks | bikes), people blurred, kept in RAM only."""
+    jpg = _cam(camera_id).stage_jpegs.get(name)
+    if not jpg:
+        raise HTTPException(404, f"no {name!r} picture yet (steps: {', '.join(STAGES)})")
+    return Response(jpg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/cameras/{camera_id}/stages", tags=["camera"])
+def camera_stages(camera_id: str):
+    """Counts and timings that go with the stage pictures."""
+    info = _cam(camera_id).stage_info
+    if info is None:
+        raise HTTPException(404, "no picture processed yet")
+    return info
+
+
 @app.get("/cameras/{camera_id}/calibration-frame.jpg", tags=["admin"])
 def calibration_frame(camera_id: str):
     """Blurred last frame at working resolution (matches the pixel coordinates in status/layout?pixels=true)."""
@@ -284,7 +309,20 @@ def put_layout(camera_id: str, upd: LayoutUpdate,
             for s in upd.slots:
                 s.polygon = normalize(s.polygon, fs)
         upd.frame_size = list(fs)
-    return store.update_layout(camera_id, upd)
+    layout = store.update_layout(camera_id, upd)
+    _preload_allocation()
+    return layout
+
+
+def _preload_allocation() -> None:
+    """Load the allocation's vehicle detector in the background as soon as a camera uses it (DINO takes ~50 s),
+    so the first picture does not wait for it while holding the store lock."""
+    if not any((c.layout.params or {}).get("allocation") for c in store.cameras.values()):
+        return
+    import threading
+
+    detector = vehicles.get(config.ALLOC_DETECTOR)
+    threading.Thread(target=detector.load, name="vehicle-detector-warmup", daemon=True).start()
 
 
 @app.delete("/cameras/{camera_id}/layout", tags=["admin"])

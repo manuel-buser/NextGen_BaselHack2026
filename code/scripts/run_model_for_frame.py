@@ -1,6 +1,6 @@
 """Run the live pipeline (align onto the reference, crop the hooks, classify) on one picture.
 
-    .venv/Scripts/python run_frame.py path/to/picture.jpeg [--camera live01]
+    .venv/Scripts/python code/scripts/run_model_for_frame.py path/to/picture.jpeg [--camera live01]
 
 Uses the camera's saved layout and reference (data/layouts/<camera>.json and .ref.npz), decides from this one
 picture alone, prints the alignment and every hook, and writes <picture>.result.jpg next to it.
@@ -11,7 +11,7 @@ from pathlib import Path
 
 import cv2
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "code"))
 from bikeslot import config, registration  # noqa: E402
 from bikeslot.preview import render  # noqa: E402

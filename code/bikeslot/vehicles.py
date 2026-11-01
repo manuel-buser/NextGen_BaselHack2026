@@ -1,12 +1,10 @@
-"""Vehicle detectors behind one interface, so the model that finds parked vehicles can be swapped by configuration.
+"""Vehicle detectors behind one interface, chosen by BIKESLOT_VEHICLE_DETECTOR (yolo | dino).
 
-    from bikeslot import vehicles
-    dets = vehicles.detect(img)               # the one chosen by BIKESLOT_VEHICLE_DETECTOR (yolo | dino)
+    dets = vehicles.detect(img)               # the configured one
     dets = vehicles.get("dino").detect(img)   # a specific one
 
-Every detector returns ``schemas.Detection`` objects in pixels of the given BGR picture, with ``contact`` set to the
-point where the vehicle meets the ground (lowest mask pixels, or the bottom centre of the box).  To add a model,
-subclass ``VehicleDetector`` and decorate it with ``@register("name")``.
+Detections are in pixels of the given BGR picture; ``contact`` is the ground point (lowest mask pixels or bottom
+centre of the box). New models: subclass ``VehicleDetector`` with ``@register("name")``.
 """
 from __future__ import annotations
 
@@ -200,7 +198,8 @@ class GroundingDino(VehicleDetector):
         dets = []
         for i in np.array(keep).flatten():
             label = str(labels[i]).strip() or "vehicle"
-            cls = config.CLS_MOTORCYCLE if "motor" in label else config.CLS_BICYCLE
+            # merged prompt phrases ("a bicycle a motorcycle") stay bicycles: motorcycles are blurred in previews
+            cls = config.CLS_MOTORCYCLE if "motor" in label and not ("bicycle" in label or "bike" in label) else config.CLS_BICYCLE
             box = [max(0.0, boxes[i][0]), max(0.0, boxes[i][1]), min(float(w), boxes[i][2]), min(float(h), boxes[i][3])]
             dets.append(Detection(cls=cls, name=label, conf=float(scores[i]), box=box, contact=_bottom_centre(box)))
         return drop_containers(dets)

@@ -71,3 +71,27 @@ def blurred_jpeg(frame: np.ndarray, dets: list[Detection], max_width: int = 1280
         img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
     ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
     return buf.tobytes() if ok else b""
+
+
+STAGES = ("camera", "hooks", "bikes")
+
+
+def stages(frame: np.ndarray, status: CameraStatus, dets: list[Detection], probs: dict[str, float]) -> tuple[dict, dict]:
+    """The admin page's three live pictures (people blurred): what the camera sent, the hook classifier's own answer
+    per hook with its score, and the final answer with the vehicles the bike finder found. Returns (jpegs, counts)."""
+    from .slotcls.smoothing import vote_from_prob
+
+    blurred = blur_boxes(frame, dets, inplace=False)
+    vehicles = [d for d in dets if d.cls in config.VEHICLE_CLASSES]
+    hooks = status.model_copy(deep=True)
+    for s in hooks.slots:
+        vote = vote_from_prob(probs.get(s.slot_id))
+        s.status = "unknown" if vote is None else "occupied" if vote else "free"
+    counts = {k: sum(s.status == k for s in hooks.slots) for k in ("free", "occupied", "unknown")}
+    hooks = hooks.model_copy(update={**counts, "message": "model 1: hook classifier, one answer per hook"})
+    bikes = status.model_copy(update={"message": f"model 2: {len(vehicles)} bike(s) found"})
+    jpegs = {"camera": blurred_jpeg(frame, dets, max_width=config.PREVIEW_MAX_WIDTH),
+             "hooks": render(blurred, hooks, [], show_detections=False, show_scores=True),
+             "bikes": render(blurred, bikes, vehicles)}
+    return jpegs, {"hooks": counts, "bikes": {"free": status.free, "occupied": status.occupied, "unknown": status.unknown,
+                                              "vehicles": len(vehicles)}}

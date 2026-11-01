@@ -32,6 +32,7 @@ class ClassifierResult:
     crops: dict[str, np.ndarray]
     detections: list[Detection] = field(default_factory=list)   # persons (for blurring), may be empty
     assignments: dict = field(default_factory=dict)             # kept for preview.render compatibility
+    timings: dict = field(default_factory=dict)                 # classifier_ms
 
 
 def _pixels(poly, frame_size):
@@ -95,12 +96,17 @@ def analyze_frame(layout: Layout, img_bgr: np.ndarray, camera_id: str,
         smoothing.update(trackers, {}, unsure)
         return _finish(status, layout, trackers, {}, frame_size, t0, ClassifierResult(status, frame, {}, {}, persons))
 
+    t_cls = time.time()
     model = model or get_model(model_path or config.SLOTCLS_MODEL)
     crops = slot_crops(layout, img_bgr, size=model.input_size, margin=margin)
     ids = list(crops)
     probs = {sid: float(pr) for sid, pr in zip(ids, model.predict_proba([crops[s] for s in ids]))}
+    classifier_ms = round((time.time() - t_cls) * 1000, 1)
 
     votes: dict[str, Optional[float]] = dict(probs)
+    found: list[Detection] = []
+    if p.get("allocation"):
+        votes, found = _allocate(layout, img_bgr, probs, votes, status, w / img_bgr.shape[1])
     if (sharpness if sharpness is not None else laplacian_var(frame)) < config.BLUR_VAR_MIN:
         status.message = "frame too blurry - no votes cast"
         votes = {sid: None for sid in ids}
@@ -125,7 +131,39 @@ def analyze_frame(layout: Layout, img_bgr: np.ndarray, camera_id: str,
                 if area and mask[y1:y2, x1:x2].sum() / area > config.PERSON_COVER_UNKNOWN:
                     votes[sid] = None
     smoothing.update(trackers, votes, unsure)
-    return _finish(status, layout, trackers, probs, frame_size, t0, ClassifierResult(status, frame, probs, crops, persons))
+    return _finish(status, layout, trackers, probs, frame_size, t0,
+                   ClassifierResult(status, frame, probs, crops, persons + found, timings={"classifier_ms": classifier_ms}))
+
+
+def _allocate(layout: Layout, img: np.ndarray, probs: dict[str, float], votes: dict[str, Optional[float]],
+              status: CameraStatus, to_frame: float) -> tuple[dict[str, Optional[float]], list[Detection]]:
+    """Vehicles seen in the rack area claim hooks (allocate.py); their decisions replace the classifier's votes.
+    Returns the votes and the vehicles in working-frame pixels (for the preview)."""
+    from .. import vehicles
+    from .allocate import decide, hook_positions
+
+    size = (img.shape[1], img.shape[0])
+    t_det = time.time()
+    try:
+        detector = vehicles.get(config.ALLOC_DETECTOR)
+        area = vehicles.rack_area(layout, size)
+        found = [d for d in detector.detect(img) if vehicles.in_area(d, area)]
+    except Exception as exc:   # detector weights missing, GPU busy, ...: the classifier decides alone
+        status.message = f"vehicle detector unavailable ({type(exc).__name__}) - classifier alone"
+        return votes, []
+    hook_x = {s.index: float(np.mean([pt[0] for pt in denormalize(s.polygon, size)])) for s in layout.slots}
+    lefts, rights = hook_positions([d.box[0] for d in found], hook_x), hook_positions([d.box[2] for d in found], hook_x)
+    alloc = decide({s.index: probs[s.slot_id] for s in layout.slots}, list(zip(lefts, rights)))
+    slot_of = {s.index: s.slot_id for s in layout.slots}
+    out = dict(votes)
+    for index in alloc.decisions:
+        out[slot_of[index]] = 0.0   # decide() only frees hooks
+    status.allocation = {"detector": detector.name, "vehicles": len(found), "ms": round((time.time() - t_det) * 1000, 1),
+                         **alloc.info()}
+    scaled = [d.model_copy(update={"box": [v * to_frame for v in d.box],
+                                   "contact": [v * to_frame for v in d.contact] if d.contact else None})
+              for d in found]
+    return out, scaled
 
 
 def _finish(status: CameraStatus, layout: Layout, trackers: dict[str, SlotTracker], probs: dict[str, float],

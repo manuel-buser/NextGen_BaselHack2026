@@ -35,6 +35,8 @@ class CameraState:
     last_frame_at: Optional[datetime] = None
     last_detections: list[Detection] = field(default_factory=list)
     preview_jpeg: Optional[bytes] = None
+    stage_jpegs: dict = field(default_factory=dict)  # preview.STAGES -> JPEG, RAM only (admin page, Camera tab)
+    stage_info: Optional[dict] = None
     calibration_jpeg: Optional[bytes] = None
     last_raw: Optional[np.ndarray] = None          # newest picture as received (RAM only), for PUT .../reference?latest
     reference: Optional[Reference] = None          # features of the frame the layout was drawn on (registration.py)
