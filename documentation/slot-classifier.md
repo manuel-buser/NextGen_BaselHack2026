@@ -113,10 +113,47 @@ Tunables in `config.py`: `SLOTCLS_MODEL` (default `assets/models/slotcls_demo.pt
 `SLOTCLS_UNSURE_BAND`, `SLOTCLS_BLUR_PERSONS` (run YOLO only to blur persons in previews and to mark slots
 hidden behind a person as unknown; switch off on a device without GPU).
 
+## Camera bumps: warping every picture onto the reference frame (`registration.py`)
+
+The polygons are pixel positions, so a camera that is bumped, turned or tilted needs a new layout - unless the
+layout's **reference frame** (the picture the polygons were drawn on) is stored too. Then every picture is
+warped onto that frame before the slots are cropped:
+
+1. SIFT keypoints + descriptors, found at 320 px width (`REG_WORK_WIDTH`, half the camera's 640 x 480) after a
+   CLAHE contrast boost, with burnt-out pixels (lamps) masked: only coarse structure (pillars, rail, graffiti,
+   windows) is used, never pixel noise or JPEG blocks, and a 320 x 240 picture registers just as well.
+2. Matches with the Lowe ratio test (0.8), then a RANSAC homography (similarity transform as fallback: rotation +
+   uniform scale + shift).
+3. Plausibility: at least 15 agreeing matches, scale 0.6-1.6, rotation <= 25 deg, little perspective change.
+4. `cv2.warpPerspective` onto the reference frame; the fixed polygons fit. A slot the camera no longer sees
+   (less than 90 % inside the warped picture) gets no vote.
+
+A picture that cannot be warped (camera turned away, covered, picked up) casts no votes; after three in a row
+(`REG_FAIL_RESET`) every slot is unknown (the app counts it as taken) and the status says so. The preview banner
+shows `aligned` or `NOT ALIGNED`; `CameraStatus.registration` and `GET /health` carry matches, scale, rotation,
+shift and the time taken (~15-20 ms per picture on a laptop CPU).
+
+Measured on the night frames of 2026-11-01 (five camera positions, up to 11 deg turned and 100 px shifted): hooks
+mapped within 0.4-0.9 px on average, 3 px at most (hook pitch ~21 px); a homography is needed, a similarity
+transform was up to 9 px off because the camera also tilted. Rack frames gave 54-123 agreeing matches, other
+scenes at most 7.
+
+```bash
+# set the layout and the frame it was drawn on (only its features are kept, no pixels: data/layouts/<id>.ref.npz)
+curl -X PUT -H "Content-Type: application/json" --data @live01.layout.json http://localhost:8000/cameras/live01/layout
+curl -X PUT --data-binary @live01.jpeg http://localhost:8000/cameras/live01/reference   # or ?latest=true
+curl http://localhost:8000/cameras/live01/reference          # reference + last registration
+curl -X DELETE http://localhost:8000/cameras/live01/reference  # crop the pictures as they come again
+```
+
+Always set the two together: a reference without its own layout warps the pictures onto the wrong frame.
+`BIKESLOT_REGISTRATION=0` turns the step off for every camera.
+
 ## Code
 
 | Module | Role |
 |---|---|
+| `registration.py` | reference features, `register` (match + RANSAC + checks), `warp` onto the reference frame |
 | `slotcls/crops.py` | polygon -> perspective-rectified patch (`crop_polygon`, `slot_crops`), contact sheet |
 | `slotcls/model.py` | `SlotClassifier` (torchvision backbone + linear head), `train`, `evaluate`, save/load, cached `get_model` |
 | `slotcls/dataset.py` | label files -> samples; context patches; augmentation (shift/zoom/rotate inside real surroundings, flip, brightness, blur, noise); `CropDataset` |
@@ -124,6 +161,7 @@ hidden behind a person as unknown; switch off on a device without GPU).
 | `slotcls/pipeline.py` | `analyze_frame(layout, img, camera_id, trackers)` -> `CameraStatus` (+ probabilities, crops, person boxes) |
 | `scripts/slotcls_calibrate.py`, `_label.py`, `_train.py`, `_run.py` | the four steps above |
 | `tests/test_slotcls.py` | crops, smoothing, demo layout/labels consistency, train/save/load round trip, pipeline with a stub model |
+| `tests/test_registration.py` | bumped camera recovered < 1.5 px (also from a 320 px picture), other scenes rejected, no pixels stored, aligned crops, reset after failures |
 
 Label file format (what the label tool writes, what the trainer reads):
 

@@ -38,3 +38,12 @@ assets/pictures/EndressPictures/
 mobileclip*.ts
 # unfinished downloads of model files
 *.part
+
+# Models
+assets/models/*
+
+# Training data
+assets/pictures/*
+
+# Personal working notes (not shared)
+my_docs/

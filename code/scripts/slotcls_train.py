@@ -3,11 +3,9 @@
     .venv/Scripts/python code/scripts/slotcls_train.py --labels assets/pictures/DemoPictures/demo_picture.labels.json \
         --out assets/models/slotcls_demo.pth --cv slots
 
-Label files are what ``slotcls_label.py`` writes (one label per slot per frame, layout referenced by path).
-Several label files (several cameras / days) can be given.  With few frames use ``--cv slots`` (leave-one-
-slot-out: how well does the model generalise to a crop it has not seen) or ``--cv frames`` (leave-one-
-frame-out) to get an honest number before the final fit on everything.  ``--finetune`` unfreezes the
-backbone (for a few thousand crops); the default trains only the linear head on frozen ImageNet features.
+Takes one or more label files from slotcls_label.py. With few frames, ``--cv slots`` (leave-one-slot-out) or
+``--cv frames`` (leave-one-frame-out) gives an honest number before the final fit. ``--finetune`` unfreezes the
+backbone; the default trains only the head.
 """
 from __future__ import annotations
 

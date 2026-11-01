@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Optional
 
 import cv2
@@ -34,10 +33,10 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 
-from . import __version__, config, demo, detector, forward, pull, vlm
+from . import __version__, config, demo, detector, forward, pull, registration, vehicles, vlm
 from .geometry import denormalize, normalize, resize_max_side
 from .occupancy import analyze_frame
-from .preview import blurred_jpeg, render
+from .preview import STAGES, blurred_jpeg, render, stages
 from .schemas import CameraInfo, CameraStatus, Layout, LayoutUpdate, SiteSummary, utcnow
 from .store import CameraState, Store
 
@@ -66,6 +65,7 @@ async def lifespan(app: FastAPI):
 
     from . import stands
     threading.Thread(target=stands._load, name="stands-warmup", daemon=True).start()
+    _preload_allocation()
     pull.start(_ingest, note=store.note_source)
     forward.start()
     if config.DEMO_PREWARM:
@@ -110,17 +110,29 @@ def _process(cam: CameraState, img: np.ndarray) -> CameraStatus:
     """Runs in a worker thread: analyse, render preview, record. Serialised per camera via the store lock."""
     frame, _ = resize_max_side(img, config.MAX_SIDE)
     with store.lock:
+        cam.last_raw = img
         if _engine(cam) == "classifier":
             from .slotcls import pipeline as slotcls_pipeline
 
             try:
-                res = slotcls_pipeline.analyze_frame(cam.layout, img, cam.camera_id, cam.trackers)
+                res = slotcls_pipeline.analyze_frame(cam.layout, img, cam.camera_id, cam.trackers,
+                                                     reference=cam.reference if config.REGISTRATION else None,
+                                                     failures_before=cam.reg_failures)
             except FileNotFoundError as exc:          # no trained model yet: keep the service up, say why
                 raise HTTPException(503, str(exc))
+            if res.status.registration is not None:
+                cam.reg_failures = 0 if res.status.registration["ok"] else cam.reg_failures + 1
         else:
             res = analyze_frame(cam.layout, cam.trackers, cam.cache, frame, cam.camera_id)
         store.push_frame(cam, res.frame)
         cam.preview_jpeg = render(res.frame, res.status, res.detections, res.assignments)
+        if _engine(cam) == "classifier":
+            cam.stage_jpegs, counts = stages(res.frame, res.status, res.detections, res.probs)
+            alloc = res.status.allocation or {}
+            counts["hooks"]["ms"] = res.timings.get("classifier_ms")
+            counts["bikes"].update(freed=alloc.get("freed", []), ms=alloc.get("ms"))
+            cam.stage_info = {"updated_at": res.status.updated_at, "aligned": (res.status.registration or {}).get("ok"),
+                              "processing_ms": res.status.processing_ms, **counts}
         cam.calibration_jpeg = blurred_jpeg(res.frame, res.detections, max_width=config.MAX_SIDE)
         store.record_status(cam, res.status, res.detections)
         (store.preview_dir / f"{cam.camera_id}.jpg").write_bytes(cam.preview_jpeg)
@@ -187,7 +199,18 @@ def health():
 
     return {"ok": True, "version": __version__, "detector": detector.info(), "cameras": len(store.cameras),
             "vlm": vlm.info(), "pull": pull.info(), "forward": forward.info(), "engine": config.ENGINE,
-            "slot_classifier": slotcls_model.info(), "time": utcnow()}
+            "slot_classifier": slotcls_model.info(), "registration": _registration_info(),
+            "vehicle_detectors": vehicles.info(), "time": utcnow()}
+
+
+def _registration_info() -> dict:
+    return {"enabled": config.REGISTRATION,
+            "cameras": {c.camera_id: _camera_registration(c) for c in store.cameras.values() if c.reference}}
+
+
+def _camera_registration(cam: CameraState) -> dict:
+    return {"reference": cam.reference.info() if cam.reference else None, "failures_in_a_row": cam.reg_failures,
+            "last": cam.last_status.registration if cam.last_status else None}
 
 
 @app.get("/cameras", response_model=list[CameraInfo], tags=["camera"])
@@ -217,6 +240,24 @@ def camera_preview(camera_id: str):
     if not cam.preview_jpeg:
         raise HTTPException(404, "no frame received yet")
     return Response(cam.preview_jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/cameras/{camera_id}/stage/{name}.jpg", tags=["camera"])
+def camera_stage(camera_id: str, name: str):
+    """One step of the live processing (camera | hooks | bikes), people blurred, kept in RAM only."""
+    jpg = _cam(camera_id).stage_jpegs.get(name)
+    if not jpg:
+        raise HTTPException(404, f"no {name!r} picture yet (steps: {', '.join(STAGES)})")
+    return Response(jpg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/cameras/{camera_id}/stages", tags=["camera"])
+def camera_stages(camera_id: str):
+    """Counts and timings that go with the stage pictures."""
+    info = _cam(camera_id).stage_info
+    if info is None:
+        raise HTTPException(404, "no picture processed yet")
+    return info
 
 
 @app.get("/cameras/{camera_id}/calibration-frame.jpg", tags=["admin"])
@@ -268,7 +309,20 @@ def put_layout(camera_id: str, upd: LayoutUpdate,
             for s in upd.slots:
                 s.polygon = normalize(s.polygon, fs)
         upd.frame_size = list(fs)
-    return store.update_layout(camera_id, upd)
+    layout = store.update_layout(camera_id, upd)
+    _preload_allocation()
+    return layout
+
+
+def _preload_allocation() -> None:
+    """Load the allocation's vehicle detector in the background as soon as a camera uses it (DINO takes ~50 s),
+    so the first picture does not wait for it while holding the store lock."""
+    if not any((c.layout.params or {}).get("allocation") for c in store.cameras.values()):
+        return
+    import threading
+
+    detector = vehicles.get(config.ALLOC_DETECTOR)
+    threading.Thread(target=detector.load, name="vehicle-detector-warmup", daemon=True).start()
 
 
 @app.delete("/cameras/{camera_id}/layout", tags=["admin"])
@@ -282,6 +336,48 @@ def delete_layout(camera_id: str):
         cam.layout = Layout(camera_id=camera_id, site_id=cam.layout.site_id, site_name=cam.layout.site_name)
         cam.reset_trackers()
         cam.last_status = None
+    return {"ok": True}
+
+
+@app.put("/cameras/{camera_id}/reference", tags=["admin"])
+async def put_reference(camera_id: str, request: Request,
+                        latest: bool = Query(False, description="use the newest picture the camera sent instead of a JPEG body")):
+    """Store the frame the camera's layout was drawn on as its reference.  From then on every picture is warped
+    onto it before the slots are cropped (registration.py), so a bumped or slightly turned camera keeps its layout.
+    Send the JPEG as body (``curl --data-binary @frame.jpg``), or ``?latest=true``.  Only the features of the frame
+    are kept (positions + descriptors), no pixels.  Set it together with the layout drawn on that very frame."""
+    cam = store.get_or_create(camera_id)
+    if latest:
+        if cam.last_raw is None:
+            raise HTTPException(409, "no picture received from this camera yet")
+        img = cam.last_raw
+    else:
+        data = await request.body()
+        if not data:
+            raise HTTPException(400, "send the reference JPEG as body, or use ?latest=true")
+        img = _decode(data)
+    try:
+        ref = await run_in_threadpool(registration.make_reference, img)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    store.set_reference(camera_id, ref)
+    out = {"camera_id": camera_id, **ref.info()}
+    lw, lh = cam.layout.frame_size
+    if lw and lh and abs(lw / lh - ref.size[0] / ref.size[1]) > 0.02:
+        out["warning"] = f"the layout was drawn on a {lw}x{lh} frame, the reference is {ref.size[0]}x{ref.size[1]}"
+    return out
+
+
+@app.get("/cameras/{camera_id}/reference", tags=["admin"])
+def get_reference(camera_id: str):
+    return {"camera_id": camera_id, "enabled": config.REGISTRATION, **_camera_registration(_cam(camera_id))}
+
+
+@app.delete("/cameras/{camera_id}/reference", tags=["admin"])
+def delete_reference(camera_id: str):
+    """Stop warping this camera's pictures (they are cropped as they come again)."""
+    _cam(camera_id)
+    store.set_reference(camera_id, None)
     return {"ok": True}
 
 

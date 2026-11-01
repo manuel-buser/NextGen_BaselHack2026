@@ -1,11 +1,7 @@
-"""Scene understanding with a vision-language model (OpenAI), used ONLY at calibration time.
+"""Scene understanding with a vision-language model (OpenAI), used only at calibration time.
 
-Set-of-mark prompting: the frame is sent with numbered boxes drawn on the detected vehicles (and, when
-available, on detected stands).  The model is asked to enumerate every slot of the row one by one, to say
-which slot index each marked vehicle stands in, the numbering direction, the parking type and rough row
-corners.  Index-to-pixel pairs are far more reliable than a bare count and let the caller fit the slot
-spacing.  Persons and motorcycles are blurred before upload.  Returns None whenever no key is configured or
-the call fails, so the pipeline keeps working offline.
+Set-of-mark prompting: numbered boxes on the vehicles, the model enumerates the slots and says which slot each mark
+is in. Persons and motorcycles are blurred before upload; returns None without a key or on failure.
 """
 from __future__ import annotations
 

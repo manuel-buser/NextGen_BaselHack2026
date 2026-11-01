@@ -48,8 +48,6 @@ def _env(name: str, default):
 # --- paths -------------------------------------------------------------------
 DATA_DIR = Path(_env("DATA_DIR", str(ROOT / "data")))
 LAYOUT_DIR = DATA_DIR / "layouts"
-HISTORY_DIR = DATA_DIR / "history"
-PREVIEW_DIR = DATA_DIR / "preview"
 GOLDEN_DIR = ROOT / "assets" / "pictures" / "GoldenDataSet"
 GOLDEN_LABELS = GOLDEN_DIR / "golden_labels.json"
 
@@ -80,6 +78,36 @@ BLUR_VAR_MIN = _env("BLUR_VAR_MIN", 30.0)       # Laplacian variance below this 
 OFFLINE_AFTER_S = _env("OFFLINE_AFTER_S", 60.0)
 RING_BUFFER = _env("RING_BUFFER", 10)           # raw frames kept in RAM per camera (calibration)
 
+# --- vehicle detectors (vehicles.py): which model finds parked vehicles ---------------------------------------
+VEHICLE_DETECTOR = _env("VEHICLE_DETECTOR", "yolo")   # yolo (YOLO11 above, bicycle/motorcycle) | dino (open vocabulary)
+DINO_MODEL = _env("DINO_MODEL", "IDEA-Research/grounding-dino-tiny")
+VEHICLE_PROMPT = _env("VEHICLE_PROMPT", "a bicycle. an e-bike. a cargo bike. a kick scooter. a motorcycle.")
+DINO_BOX_THRESHOLD = _env("DINO_BOX_THRESHOLD", 0.2)   # 2026-11-01 sweep: 0.20 kept the 30 live01 pictures exact and found 39/41 Memox bikes
+DINO_TEXT_THRESHOLD = _env("DINO_TEXT_THRESHOLD", 0.2)
+VEHICLE_NMS_IOU = _env("VEHICLE_NMS_IOU", 0.5)        # boxes overlapping more than this are one vehicle
+
+# --- hook allocation (slotcls/allocate.py), per camera with layout.params.allocation = "dino" -------------------
+ALLOC_DETECTOR = _env("ALLOC_DETECTOR", "dino")       # the vehicle detector whose vehicles claim the hooks
+ALLOC_FREE_BELOW = _env("ALLOC_FREE_BELOW", 0.15)     # clearly free: v4 scored free hooks 2+ away from a bike <= 0.121
+# One bike lights its own hook and at most this many hooks on each side. v4 on the 64 train-split pictures (one bike
+# each): neighbours up to 0.998, 2 hooks away <= 0.174 (3/105 at 0.15+), never a cluster longer than 3 hooks.
+ALLOC_BIKE_REACH = _env("ALLOC_BIKE_REACH", 1)
+# --- registration (registration.py): warp each picture onto the reference frame of its layout ----------------
+# Limits measured on the 2026-11-01 night frames of live01: the rack registered with 55-121 agreeing matches,
+# scale 0.87-1.15, rotation <= 7 deg, perspective <= 0.0005; other scenes gave <= 7 matches and rotations of 60+ deg.
+REGISTRATION = _env("REGISTRATION", True)             # use a camera's reference (data/layouts/<id>.ref.npz) if it has one
+REG_WORK_WIDTH = _env("REG_WORK_WIDTH", 320)          # features are found at this width only: half the 640 px camera picture
+REG_FEATURES = _env("REG_FEATURES", 3000)
+REG_RATIO = _env("REG_RATIO", 0.8)                    # Lowe ratio test for a descriptor match
+REG_RANSAC_PX = _env("REG_RANSAC_PX", 3.0)            # RANSAC reprojection threshold, reference pixels
+REG_MIN_INLIERS = _env("REG_MIN_INLIERS", 15)
+REG_MIN_SCALE = _env("REG_MIN_SCALE", 0.6)
+REG_MAX_SCALE = _env("REG_MAX_SCALE", 1.6)
+REG_MAX_ROTATION_DEG = _env("REG_MAX_ROTATION_DEG", 25.0)
+REG_MAX_PERSPECTIVE = _env("REG_MAX_PERSPECTIVE", 0.002)  # |h31|, |h32| per pixel of the reference
+REG_MIN_COVERAGE = _env("REG_MIN_COVERAGE", 0.9)      # a slot less visible than this after warping gets no vote
+REG_FAIL_RESET = _env("REG_FAIL_RESET", 3)            # this many unaligned pictures in a row -> every slot unknown
+
 # --- calibration -------------------------------------------------------------
 STAND_MODEL = _env("STAND_MODEL", "yoloe-11l-seg.pt")   # open-vocabulary model for rack stands (calibration only)
 STAND_CONF = _env("STAND_CONF", 0.3)                    # visual-prompt confidence to accept a stand
@@ -104,7 +132,7 @@ DEMO_PREWARM = _env("DEMO_PREWARM", True)   # compute the /demo example images i
 # --- pull mode ---------------------------------------------------------------
 # cameras the service polls itself: "cam_id=url,cam_id2=url2" (empty string disables pulling)
 PULL_CAMERAS = _env("PULL_CAMERAS", "live01=http://192.168.21.95/snapshot")
-PULL_INTERVAL = _env("PULL_INTERVAL", 1.0)     # seconds between snapshots per camera
+PULL_INTERVAL = _env("PULL_INTERVAL", 0.5)     # camera uploads every ~2 s: a 0.5 s poll adds <= 0.5 s, unchanged pictures answer 304
 PULL_TIMEOUT = _env("PULL_TIMEOUT", 10.0)
 PULL_VIEW_KEY = _env("PULL_VIEW_KEY", "")      # the relay's view key, sent as X-View-Key (keeps it out of the URL); .env, never committed
 PULL_MAX_AGE_S = _env("PULL_MAX_AGE_S", 60.0)  # a picture older than this (X-Snapshot-Age-S from the relay) is not used: the camera stopped

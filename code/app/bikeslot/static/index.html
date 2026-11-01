@@ -36,72 +36,37 @@
     <main class="app__main">
       <section class="map enter" aria-label="Map of bike parkings">
         <div id="map" class="map__canvas"></div>
-        <!-- The overview: free spaces over all bike parkings, on the map from the first moment -->
-        <section class="overview enter" id="hero" style="--i: 1" aria-labelledby="sum-h">
-          <div class="overview__body" id="hero-body" aria-busy="true">
-            <span class="sk" style="width: 64px; height: 12px"></span>
-            <span class="sk" style="width: 72px; height: 62px; margin-top: 10px; border-radius: 10px"></span>
-            <span class="sk" style="width: 100%; height: 14px; margin-top: 12px"></span>
-            <span class="sk" style="width: 100%; height: 44px; margin-top: 14px; border-radius: 10px"></span>
-          </div>
-          <footer class="overview__foot">
-            <p class="foot__item"><svg class="ico" id="refresh-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4.5v4h-4"/></svg><span id="updated">Waiting for the first update</span></p>
-            <span class="info"><button type="button" class="info__btn" aria-label="Privacy" aria-expanded="false" aria-describedby="privacy-note"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7l1.5-2.5h5L16 7h3.5A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5v-9A1.5 1.5 0 0 1 4.5 7z"/><circle cx="12" cy="13" r="3.25"/><path d="M3 3l18 18"/></svg></button><span class="info__pop" id="privacy-note">Only counts are kept. No pictures are stored.</span></span>
-          </footer>
-        </section>
         <div class="map-key" id="map-key" role="group" aria-label="Map key" hidden>
           <span class="map-key__i"><span class="pin"></span>Free</span>
           <span class="map-key__i"><span class="pin pin--full"></span>Full</span>
           <span class="map-key__i"><span class="pin pin--none"></span>No data</span>
         </div>
       </section>
+      <section class="pane" aria-label="Free spaces and bike parkings">
+        <div class="pane__scroll">
+          <section class="summary enter" id="hero" style="--i: 1" aria-labelledby="sum-h" aria-busy="true">
+            <span class="sk" style="width: 64px; height: 12px"></span>
+            <span class="sk" style="width: 64px; height: 84px; margin-top: 16px; border-radius: 10px"></span>
+            <span class="sk" style="width: 190px; height: 14px; margin-top: 18px"></span>
+            <span class="sk" style="width: 100%; height: 48px; margin-top: 20px; border-radius: 10px"></span>
+          </section>
+          <div class="list-head enter" style="--i: 2">
+            <h2 class="eyebrow">Bike parkings</h2>
+            <span class="list-head__n" id="rack-count"></span>
+          </div>
+          <ul class="list" id="racks" aria-busy="true">
+            <li><div class="tile tile--sk enter" style="--i: 3"><div class="tile__head"><span class="sk" style="width: 168px; height: 16px; margin: 3px 0"></span><span class="sk" style="width: 58px; height: 24px; border-radius: 999px; justify-self: end"></span><span class="sk" style="width: 92px; height: 26px; margin: 3px 0"></span><span></span><span class="sk" style="grid-column: 1 / -1; height: 4px; border-radius: 2px"></span><span class="sk" style="width: 96px; height: 10px; margin: 3px 0"></span></div></div></li>
+            <li><div class="tile tile--sk enter" style="--i: 4"><div class="tile__head"><span class="sk" style="width: 196px; height: 16px; margin: 3px 0"></span><span class="sk" style="width: 58px; height: 24px; border-radius: 999px; justify-self: end"></span><span class="sk" style="width: 92px; height: 26px; margin: 3px 0"></span><span></span><span class="sk" style="grid-column: 1 / -1; height: 4px; border-radius: 2px"></span><span class="sk" style="width: 96px; height: 10px; margin: 3px 0"></span></div></div></li>
+            <li><div class="tile tile--sk enter" style="--i: 5"><div class="tile__head"><span class="sk" style="width: 132px; height: 16px; margin: 3px 0"></span><span class="sk" style="width: 58px; height: 24px; border-radius: 999px; justify-self: end"></span><span class="sk" style="width: 92px; height: 26px; margin: 3px 0"></span><span></span><span class="sk" style="grid-column: 1 / -1; height: 4px; border-radius: 2px"></span><span class="sk" style="width: 96px; height: 10px; margin: 3px 0"></span></div></div></li>
+          </ul>
+        </div>
+        <footer class="pane__foot">
+          <span class="info info--up"><button type="button" class="info__btn" aria-label="Privacy" aria-expanded="false" aria-describedby="privacy-note"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7l1.5-2.5h5L16 7h3.5A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5v-9A1.5 1.5 0 0 1 4.5 7z"/><circle cx="12" cy="13" r="3.25"/><path d="M3 3l18 18"/></svg></button><span class="info__pop" id="privacy-note">Only counts are kept. No pictures are stored.</span></span>
+          <p class="foot__item"><svg class="ico" id="refresh-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4.5v4h-4"/></svg><span id="updated">Waiting for the first update</span></p>
+        </footer>
+      </section>
     </main>
   </div>
-
-  <!-- One bike parking, opened from its pin: the rack drawn with its spaces, and below it the day's statistics -->
-  <dialog class="popup" id="popup" aria-labelledby="popup-name">
-    <header class="popup__head">
-      <div class="popup__title"><h2 class="popup__name" id="popup-name"></h2><span class="popup__chips" id="popup-chips"></span></div>
-      <button type="button" class="popup__close" id="popup-close" aria-label="Close"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
-      <p class="count" id="popup-count"><span class="count__n"></span><span class="count__of"></span></p>
-      <p class="popup__meta" id="popup-meta"></p>
-    </header>
-    <div class="popup__body">
-      <section class="panel" aria-labelledby="spaces-h">
-        <h3 class="eyebrow" id="spaces-h">Spaces</h3>
-        <div class="blocks" id="popup-spaces"></div>
-      </section>
-      <section class="panel forecast" id="forecast" aria-label="Free spaces through the day" data-state="loading"><p class="forecast-quiet">Loading predictions</p></section>
-    </div>
-  </dialog>
-
-  <!-- Shared drawing parts for the rack scenes: the wall and floor shading and the bicycle that hangs from a taken
-       hook (front wheel on the hook at the origin, the rear wheel 118 units below, saddle and handlebar to the right) -->
-  <svg class="defs" width="0" height="0" aria-hidden="true" focusable="false">
-    <defs>
-      <linearGradient id="scene-wall-grad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="wall-top"/><stop offset="1" class="wall-bottom"/></linearGradient>
-      <linearGradient id="scene-floor-grad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="floor-top"/><stop offset="1" class="floor-bottom"/></linearGradient>
-      <g id="bike">
-        <g class="bike-wheel">
-          <circle class="bike-tyre" cx="0" cy="17" r="17"/>
-          <circle class="bike-rim" cx="0" cy="17" r="13"/>
-          <path class="bike-spoke" d="M-13 17h26M0 4v26M-9.2 7.8l18.4 18.4M9.2 7.8l-18.4 18.4"/>
-          <circle class="bike-hub" cx="0" cy="17" r="2.4"/>
-        </g>
-        <g class="bike-wheel">
-          <circle class="bike-tyre" cx="0" cy="101" r="17"/>
-          <circle class="bike-rim" cx="0" cy="101" r="13"/>
-          <path class="bike-spoke" d="M-13 101h26M0 88v26M-9.2 91.8l18.4 18.4M9.2 91.8l-18.4 18.4"/>
-          <circle class="bike-hub" cx="0" cy="101" r="2.4"/>
-        </g>
-        <path class="bike-frame" d="M34 77L32.3 31L-4.3 67ZM0 101L-4.3 67M0 101L34 77M32.3 31L0 17M32.3 31L37.4 21M34 77L40 80"/>
-        <circle class="bike-ring" cx="-4.3" cy="67" r="6"/>
-        <path class="bike-crank" d="M-4.3 67L2.5 73.5"/>
-        <path class="bike-saddle" d="M40.8 71v18"/>
-        <circle class="bike-grip" cx="37.4" cy="21" r="2.4"/>
-      </g>
-    </defs>
-  </svg>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="/static/app.js"></script>
 </body>

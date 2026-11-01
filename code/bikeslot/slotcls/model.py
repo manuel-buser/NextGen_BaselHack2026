@@ -1,20 +1,13 @@
-"""Binary free/occupied classifier for slot crops.
+"""Binary free/occupied classifier for slot crops: ImageNet torchvision backbone (MobileNetV3-small) + linear head.
 
-ImageNet-pretrained torchvision backbone (MobileNetV3-small by default: 2.5 M parameters, ~1 ms per crop on
-a GPU, fine on a Raspberry Pi / Jetson) + one linear head giving the logit of "occupied".
-
-Two training regimes, same code path (``train``):
-* ``finetune=False`` - backbone frozen, only the head learns.  Works with a few dozen labelled crops.
-* ``finetune=True``  - everything learns with a small learning rate.  For a few thousand crops.
-
-The saved file (``.pth``) holds the backbone name, the input size and the state dict (head only when the
-backbone was frozen, so the file is a few KB and the ImageNet weights come from torchvision's cache).
+``finetune=False`` trains the head only (a few dozen crops), ``True`` everything. The ``.pth`` holds backbone
+name, input size and state dict (head only when frozen: a few KB, the backbone weights come from torchvision).
 """
 from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from typing import Optional, Sequence
 
 import numpy as np
 import torch
