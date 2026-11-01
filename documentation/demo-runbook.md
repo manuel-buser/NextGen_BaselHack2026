@@ -10,8 +10,9 @@ hook, and the free count of that bay drops on the page within about 20 seconds. 
 
 | Part | Where | Port | Code |
 |---|---|---|---|
-| Camera (ESP32) | on the wall, WiFi | 80 | serves `GET /snapshot` (JPEG) |
-| Vision service | Manuel's laptop | 8000 | `code/bikeslot`: pulls the snapshot every 5 s, classifies the 19 hooks of bay 2, serves `GET /cameras/live01/status` |
+| Camera (XIAO ESP32) | on the wall, phone hotspot | - | blurs faces and plates, pushes the JPEG every 10 s (`SNAPSHOT_INTERVAL_S`) and its health to the relay |
+| Relay | Manuel's VPS, `https://relay.manuel-buser.com` | 443 | `relay/`: keeps the newest picture per camera in memory, serves it with the view key |
+| Vision service | Manuel's laptop | 8000 | `code/bikeslot`: asks the relay for a new picture every second, classifies the 19 hooks of bay 2, serves `GET /cameras/live01/status` |
 | App (user + admin page) | same laptop, or the frontend laptop, or a server | 8080 locally | `code/app`: reads the decided hooks from the vision service (rack `MX-CAM`), the rest is demo data |
 | Demo driver | wherever the app is | - | `code/app/tools/demo_data.py` feeds the demo racks |
 
@@ -37,18 +38,31 @@ and `documentation/CONTRACTS.md`, section 2b.
 
 ## At the venue, in this order
 
-1. **Network.** Camera, vision laptop and the app's laptop on the same WiFi (or the app on a server, see below).
-   Note the camera's address (its serial log or the router) and the vision laptop's address (`ipconfig`, the
-   WiFi adapter's IPv4). Windows Firewall on the vision laptop must allow inbound TCP 8000 (it asks on the first
-   start of uvicorn; answer "allow" for private networks).
-2. **Vision service** (repo root on the vision laptop; replace the camera address):
+1. **Network.** The camera runs on a phone hotspot and pushes its blurred pictures to the relay
+   (`https://relay.manuel-buser.com`, `relay/README.md`), so the vision laptop only needs internet. The app's
+   laptop must reach the vision laptop (same WiFi), or the app runs on a server (see below). Note the vision
+   laptop's address (`ipconfig`, the WiFi adapter's IPv4). Windows Firewall on the vision laptop must allow
+   inbound TCP 8000 (it asks on the first start of uvicorn; answer "allow" for private networks). Check the relay
+   first: `https://relay.manuel-buser.com/?key=<VIEW_KEY>` shows the live picture, `/health?key=<VIEW_KEY>` says
+   `"online": true`.
+2. **Vision service** (repo root on the vision laptop). The relay address and the view key are in `.env` (copy
+   `.env.example`, fill in the key; `.env` is never committed):
    ```sh
-   set BIKESLOT_PULL_CAMERAS=live01=http://192.168.21.95/snapshot
+   # .env
+   BIKESLOT_PULL_CAMERAS=live01=https://relay.manuel-buser.com/snapshot
+   BIKESLOT_PULL_VIEW_KEY=<VIEW_KEY>
+   ```
+   ```sh
    .venv/Scripts/python -m uvicorn --app-dir code bikeslot.api:app --host 0.0.0.0 --port 8000
    ```
-   The log must say `demo slot layout also loaded for live01 (19 slots ...)` and `pulling live01 from ...`.
-   Check http://127.0.0.1:8000/ (debug view: the live picture with the 19 coloured hooks) and
-   http://127.0.0.1:8000/cameras/live01/status (`slot_count` 19, `free` and `occupied` plausible, `online` true).
+   The log must say `demo slot layout also loaded for live01 (19 slots ...)` and `pulling live01 from
+   https://relay.manuel-buser.com/snapshot + /health every 1 s (X-View-Key set)`. Check http://127.0.0.1:8000/
+   (debug view: the live picture with the 19 coloured hooks) and http://127.0.0.1:8000/cameras/live01/status
+   (`slot_count` 19, `free` and `occupied` plausible, `online` true, `source.kind` relay). `GET /health` lists the
+   puller under `pull`: `state` ok / not_modified (nothing new since the last poll) / waiting (the camera has not
+   sent anything yet) / stale (the relay's newest picture is older than `BIKESLOT_PULL_MAX_AGE_S`, 60 s) / error
+   (`last_error` says why; 401 = wrong view key). Camera on the LAN instead: `BIKESLOT_PULL_CAMERAS=live01=
+   http://192.168.21.95/snapshot` and no key.
 3. **Mount check.** The 19 polygons were drawn on `assets/pictures/DemoPictures/demo_picture.jpeg`. Put the camera
    where that picture was taken: the two pillars at the left and right edge of the hooks, the whole row in view.
    From that angle hook 3 is hidden behind a bike hanging on hook 4, so the count can be one low then; a camera
@@ -56,7 +70,7 @@ and `documentation/CONTRACTS.md`, section 2b.
    (about two minutes). Head-on: `slotcls_hooks.py --images data/live01_frame.jpg --camera live01 --slots 19`
    finds the row by itself (overlay next to the file). At an angle, click the four corners:
    ```sh
-   curl -s http://192.168.21.95/snapshot -o data/live01_frame.jpg
+   curl -s "https://relay.manuel-buser.com/snapshot?key=<VIEW_KEY>" -o data/live01_frame.jpg
    .venv/Scripts/python code/scripts/slotcls_calibrate.py --image data/live01_frame.jpg --camera live01 --slots 19 --interactive --out data/layouts/live01.json
    curl -X PUT -H "Content-Type: application/json" --data-binary @data/layouts/live01.json http://127.0.0.1:8000/cameras/live01/layout
    ```
@@ -84,14 +98,17 @@ and `documentation/CONTRACTS.md`, section 2b.
 ## The live moment
 
 - Before: say the number on the page ("14 of 19 free in bay 2").
-- Walk in with the bike, hang it on a free hook, step out of the picture. The service needs 3 of its last 5
-  frames to agree (about 15 s at one frame every 5 s), the app shows the new count at its next poll (3 s).
+- Walk in with the bike, hang it on a free hook, step out of the picture. The camera pushes a new picture every
+  10 s, the service picks it up within a second and needs 3 of its last 5 pictures to agree (about 20 to 30 s),
+  the app shows the new count at its next poll (3 s).
 - After: the count is one lower, the hook is red in the rack plan (tap the rack on the user page, or zoom in on
   the map). The admin page's preview shows the same hook red in the camera picture, persons blurred.
-- Taking the bike away works the same way: free again after about 15 s.
+- Taking the bike away works the same way: free again after about 20 to 30 s.
 
 Faster reaction, at the price of more flicker, on the vision laptop before the start:
-`set BIKESLOT_PULL_INTERVAL=3` and `set BIKESLOT_SLOTCLS_K_FRAMES=3` (2 of 3 frames agree: about 6 s).
+`set BIKESLOT_K_FRAMES=3` (2 of 3 pictures agree: about 20 s). The picture rate itself is set on the camera
+(`SNAPSHOT_INTERVAL_S` in its `config.h`, 10 s = about 16 MB of mobile data per hour); polling faster than
+1 s gains nothing.
 
 ## If something is off
 
@@ -102,6 +119,9 @@ Faster reaction, at the price of more flicker, on the vision laptop before the s
 | card says "no slot layout on the service yet" | the layout was not seeded for `live01` | start log; `BIKESLOT_DEMO_LAYOUT_CAMERAS=live01` is the default, or redraw (step 3) |
 | hooks right in the preview, count wrong on the page | numbering | the app shows the service's states as they are; compare `GET /cameras/live01/status` with `GET /api/racks/MX-CAM` |
 | rack shows "No recent data" | no new decided frame for `STALE_AFTER_S` | camera offline or the service stuck: the service's `/health` (`pull.last_error`) |
+| the service's `/health` says `pull.state` waiting | the relay has no picture from the camera yet | the camera and its hotspot: `https://relay.manuel-buser.com/health?key=<VIEW_KEY>` must say `online` |
+| `pull.state` error, `last_error` "view key refused (401)" | wrong or missing key | `BIKESLOT_PULL_VIEW_KEY` in `.env` = the relay's `VIEW_KEY` |
+| rack grey ("Not tracked live") although the service runs | the relay reports the camera offline, or its newest picture is older than 60 s | the camera stopped pushing: hotspot, power; the status `message` and `source` say which |
 | the service misjudges a hook | model | label a few snapshots and retrain (`slot-classifier.md`); until then say so, the count is what it is |
 | the app runs on a server and cannot reach the laptop | push instead of pull | on the laptop `set BIKESLOT_APP_URL=https://<server>` and `set BIKESLOT_APP_RACKS=live01=MX-CAM` (and `BIKESLOT_APP_TOKEN` = the server's `VISION_TOKEN`); in the server's `racks.memox.yaml` drop the `url` of `MX-CAM`. The preview is not available on the admin page then |
 

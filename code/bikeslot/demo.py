@@ -228,7 +228,7 @@ ul{margin:6px 0;padding-left:20px}code{font-size:13px;background:var(--line);pad
 <p class="muted">A camera photographs the bike rack every few seconds. The laptop finds the bikes, decides which numbered slots are taken, and tells the app how many are free.</p>
 
 <div class="steps">
- <div class="card step"><b><span class="n">1</span>Snapshot</b>The camera serves a JPEG; the service fetches one every 5 s (no video stream).</div>
+ <div class="card step"><b><span class="n">1</span>Snapshot</b>The camera pushes a blurred JPEG to the relay; the service fetches the newest one, asking every second (no video stream).</div>
  <div class="card step"><b><span class="n">2</span>Detect</b>YOLO11 segmentation finds bicycles, motorbikes and persons (~100 ms on the GPU, fully offline). Persons are blurred.</div>
  <div class="card step"><b><span class="n">3</span>Assign</b>The lowest pixels of each bike mask = where the wheel touches the ground (dot). That point decides which slot polygon the bike stands in.</div>
  <div class="card step"><b><span class="n">4</span>Report</b>Votes are smoothed over 5 frames, then <code>/sites</code> and <code>/cameras/{id}/status</code> give free/occupied per slot.</div>
@@ -237,7 +237,7 @@ ul{margin:6px 0;padding-left:20px}code{font-size:13px;background:var(--line);pad
 <div class="legend"><span><span class="sw" style="background:var(--free)"></span>free slot</span><span><span class="sw" style="background:var(--occ)"></span>occupied slot</span><span><span class="sw" style="background:var(--unk)"></span>unknown</span><span>box + dot = detected bike and its wheel contact point, <code>-> S03</code> = assigned slot</span></div>
 
 <h2>Live camera</h2>
-<p class="muted" id="live-sub">Pulled from the real camera every 5 s.</p>
+<p class="muted" id="live-sub">Pulled from the real camera (through the relay), checked every second.</p>
 <div id="live"></div>
 
 <h2>New approach &mdash; slots drawn once, a small CNN decides free / occupied per slot</h2>

@@ -66,7 +66,7 @@ async def lifespan(app: FastAPI):
 
     from . import stands
     threading.Thread(target=stands._load, name="stands-warmup", daemon=True).start()
-    pull.start(_ingest)
+    pull.start(_ingest, note=store.note_source)
     forward.start()
     if config.DEMO_PREWARM:
         threading.Thread(target=demo.prewarm, name="demo-warmup", daemon=True).start()
@@ -175,7 +175,7 @@ def set_source(camera_id: str, url: str = Query(..., description="snapshot URL t
     if old:
         old.stop.set()
     if url:
-        pull.start(_ingest, f"{camera_id}={url}")
+        pull.start(_ingest, f"{camera_id}={url}", note=store.note_source)
     return pull.info()
 
 

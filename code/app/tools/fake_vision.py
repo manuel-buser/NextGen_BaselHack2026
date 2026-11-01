@@ -57,6 +57,10 @@ def make_app(capacity: int = CAPACITY, occupied=OCCUPIED, camera: str = CAMERA, 
             "frame_size": [1280, 960], "slot_count": capacity, "free": capacity - taken, "occupied": taken, "unknown": 0,
             "slots": slots, "detections": {"person": 0, "bicycle": taken, "motorcycle": 0}, "processing_ms": 12.5,
             "preview_url": f"/cameras/{camera}/preview.jpg", "message": "",
+            # what the real service learns from the relay / camera health (pull mode): shown on the admin camera card
+            "source": {"kind": "relay", "online": True, "camera_id": "cam01", "last_seen_s": 0.3,
+                       "snapshot_age_s": round(time.time() - state["frame_at"], 1), "state": "ok", "last_error": None,
+                       "temperature_c": 55.3, "wifi_rssi_dbm": -41, "wifi_connected": True, "uptime_s": int(time.time() - state["started"])},
         }
 
     def known(camera_id: str) -> None:
