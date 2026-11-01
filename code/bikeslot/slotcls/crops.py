@@ -1,9 +1,7 @@
 """Slot polygons -> fixed-size crops.
 
-A 4-point slot polygon (back-left, back-right, front-right, front-left, normalised 0..1) is rectified with a
-perspective warp onto a ``size`` x ``size`` patch, so every slot - near or far, left or right - looks the
-same to the classifier.  Polygons with more than 4 vertices fall back to their bounding rectangle.
-``margin`` grows the polygon around its centre so a little context (neighbouring hook, wall, ground) is kept.
+A 4-point polygon (normalised, back-left first) is perspective-rectified to ``size`` x ``size``; more vertices fall
+back to the bounding rectangle. ``margin`` grows the polygon around its centre to keep a little context.
 """
 from __future__ import annotations
 

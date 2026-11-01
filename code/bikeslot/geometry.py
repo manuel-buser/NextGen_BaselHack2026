@@ -43,14 +43,9 @@ def _row_homography(row: Row) -> Optional[np.ndarray]:
 
 
 def interpolate_row(row: Row, camera_id: str, start_index: int = 1) -> list[Slot]:
-    """Split a row into ``row.slot_count`` quadrilaterals of equal width *on the ground*.
-
-    The row quadrilateral is mapped to a unit square (homography), split into N equal columns there and
-    mapped back, so perspective foreshortening is respected (bays further away look narrower).  Falls back
-    to linear interpolation along the front/back lines for degenerate quads.
-    Slot polygons are returned in vertex order back-left, back-right, front-right, front-left and are
-    numbered in ``row.direction``; both lines must be given left->right as seen in the image.
-    """
+    """Split a row into ``row.slot_count`` quads of equal width on the ground (split in a homography to the unit
+    square; linear fallback for degenerate quads). Front/back lines must run left->right in the image; slots are
+    numbered in ``row.direction``, vertices back-left, back-right, front-right, front-left."""
     n = row.slot_count
     p0, p1 = row.front
     q0, q1 = row.back
@@ -115,12 +110,6 @@ def row_hull(layout: Layout, frame_size: Sequence[int]) -> Optional[np.ndarray]:
 
 def point_in_polygon(poly: np.ndarray, pt: Sequence[float]) -> bool:
     return cv2.pointPolygonTest(poly, (float(pt[0]), float(pt[1])), False) >= 0
-
-
-def polygon_area(poly: Sequence[Point]) -> float:
-    arr = np.asarray(poly, dtype=np.float64)
-    x, y = arr[:, 0], arr[:, 1]
-    return 0.5 * abs(float(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1))))
 
 
 def polygon_iou(a: Sequence[Point], b: Sequence[Point]) -> float:

@@ -14,8 +14,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # make "bikeslot" importable
 
-import cv2  # noqa: E402
-
 from bikeslot import config  # noqa: E402
 from bikeslot.geometry import imread  # noqa: E402
 from bikeslot.occupancy import SlotMaskCache, analyze_frame, make_trackers  # noqa: E402

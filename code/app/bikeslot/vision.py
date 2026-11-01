@@ -79,13 +79,11 @@ def untracked(store, rack: Rack, now: float) -> None:
 
 
 def ingest_vision(app: FastAPI, rack: Rack, status, now: float) -> tuple[dict, int]:
-    """One CameraStatus from the service, polled or pushed. The service counts as alive. A status with a new
-    `updated_at` is a frame decided on the laptop: its decided slots go through the rack (window 1, the service has
-    smoothed already). A camera the service reports offline, or whose last picture is older than STALE_AFTER_S,
-    makes every space occupied, on every status, so the rack never shows free spaces it cannot see. The `source`
-    block (what the service learned from the relay / the camera: temperature, WiFi, uptime) fills the camera
-    card like a node's own health report. Returns the reply body and HTTP status the push endpoint answers
-    with."""
+    """One CameraStatus from the service, polled or pushed; returns the push endpoint's reply body and HTTP status.
+    A new `updated_at` is a new frame: its decided slots go through the rack (window 1, the service has smoothed
+    already). An offline camera, or a picture older than STALE_AFTER_S, makes every space occupied on every status,
+    so the rack never shows free spaces it cannot see. The `source` block (relay / camera health) fills the camera
+    card like a node's own health report."""
     store = app.state.store
     node = rack.vision.node_id
     if not isinstance(status, dict):

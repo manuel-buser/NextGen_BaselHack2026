@@ -1,14 +1,8 @@
-"""Stage B: one camera frame -> per-slot occupancy.
+"""Stage B (detector engine): one camera frame -> per-slot occupancy.
 
-    detections (masks + ground-contact points)  ->  slot scores  ->  per-slot vote  ->  smoothing  ->  CameraStatus
-
-Scoring a vehicle detection against a slot polygon:
-    score = 1.0 if its ground-contact point (lowest mask pixels ~ rear wheel) lies inside the slot
-          + share of its "on the ground" mask pixels (bottom FOOTPRINT_FRAC of the box) inside the slot
-Each detection is assigned to its best slot only (one bike cannot fill two slots); a slot is voted
-"occupied" in this frame if at least one vehicle was assigned to it.  Slots largely covered by a person
-get no vote (unknown) because we cannot see them.  Votes are smoothed over the last k frames with
-hysteresis so a single missed detection does not flip the state.
+Vehicle score per slot: 1.0 if its ground-contact point lies inside + share of its bottom FOOTPRINT_FRAC inside.
+Each vehicle fills only its best slot; slots mostly covered by a person get no vote; votes are smoothed over
+k frames with hysteresis.
 """
 from __future__ import annotations
 
@@ -32,6 +26,8 @@ class SlotTracker:
     min_frames: int = 2
     votes: deque = field(default_factory=deque)
     state: str = "unknown"
+    occupied_above: Optional[float] = None   # vote mean from which the slot is occupied (None: OCCUPIED_ABOVE)
+    free_below: Optional[float] = None       # ... and up to which it is free (None: FREE_BELOW)
     last_change = None
 
     def __post_init__(self):
@@ -47,9 +43,9 @@ class SlotTracker:
             new_state = "unknown"
         elif len(self.votes) < self.min_frames:
             new_state = "unknown"
-        elif mean >= config.OCCUPIED_ABOVE:
+        elif mean >= (config.OCCUPIED_ABOVE if self.occupied_above is None else self.occupied_above):
             new_state = "occupied"
-        elif mean <= config.FREE_BELOW:
+        elif mean <= (config.FREE_BELOW if self.free_below is None else self.free_below):
             new_state = "free"
         elif self.state == "unknown":
             new_state = "occupied" if mean > 0.5 else "free"
@@ -97,7 +93,11 @@ def make_trackers(layout: Layout) -> dict[str, SlotTracker]:
     p = layout.params or {}
     k = int(p.get("k_frames", config.K_FRAMES))
     min_frames = int(p.get("min_frames", 2))
-    return {s.slot_id: SlotTracker(s.slot_id, k=k, min_frames=min_frames) for s in layout.slots}
+    above, below = p.get("occupied_above"), p.get("free_below")
+    return {s.slot_id: SlotTracker(s.slot_id, k=k, min_frames=min_frames,
+                                   occupied_above=None if above is None else float(above),
+                                   free_below=None if below is None else float(below))
+            for s in layout.slots}
 
 
 def score_detection(det: Detection, masks: dict, shape: tuple[int, int], footprint_frac: float) -> dict[str, float]:

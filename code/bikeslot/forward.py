@@ -1,15 +1,8 @@
 """Push mode towards the app (code/app): every new camera status is posted to the app's vision endpoint.
 
-The app normally polls ``GET /cameras/{id}/status`` itself (a rack with a ``vision`` block in its racks file).
-When the app runs somewhere this laptop can reach but that cannot reach the laptop (a server), the service
-pushes instead.  Configured with environment variables (or .env at the repo root):
-
-    BIKESLOT_APP_URL=http://<app-host>:8080     the app; empty (default) = off, the app polls us
-    BIKESLOT_APP_RACKS=live01=MX-CAM             camera id here -> rack id in the app's racks file ("a=A,b=B")
-    BIKESLOT_APP_TOKEN=...                       sent as X-Vision-Token when the app has VISION_TOKEN set
-
-One background thread posts the latest status per camera; older ones are dropped because the app only wants
-the newest, so a slow or unreachable app never delays the frame processing.  State: ``GET /health`` -> "forward".
+Only for an app that cannot reach this service (otherwise the app polls). Off unless BIKESLOT_APP_URL is set;
+BIKESLOT_APP_RACKS maps camera -> rack, BIKESLOT_APP_TOKEN is sent as X-Vision-Token. One thread posts only the
+newest status per camera, so a slow app never delays frame processing. State: ``GET /health`` -> "forward".
 """
 from __future__ import annotations
 

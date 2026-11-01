@@ -1,16 +1,7 @@
-"""Painted-bay refinement for calibration.
+"""Painted-bay refinement for calibration: find the painted divider lines inside a rough row quad.
 
-Given a rough row quadrilateral (from the bike clusters / VLM), find the painted divider lines and turn
-them into exact bay polygons.  Two passes:
-
-1. rectify the rough quad to a flat strip, find bright thin near-vertical segments (top-hat + probabilistic
-   Hough), cluster them into divider candidates (still slanted, the rough quad is only approximate);
-2. rectify again using the outermost strong candidates as the quad - now the dividers are vertical - and
-   repeat the detection with a tight tilt limit; weak candidates (bike frames, reflections) are dropped and
-   the back edge is taken from where the paint ends.
-
-Works on painted bays only; for racks without ground markings it returns None and the caller keeps the
-equal split.  All geometry is returned in image pixel coordinates.
+Two passes (rectify, detect thin bright near-vertical segments, rectify again on the outermost dividers). Returns
+None for racks without ground markings; geometry is in image pixels.
 """
 from __future__ import annotations
 
@@ -96,11 +87,7 @@ def _strong(cands: list[dict]) -> list[dict]:
 
 def find_dividers(frames: Sequence[np.ndarray], quad_px: Sequence[Sequence[float]]) -> Optional[dict]:
     """Detect painted dividers inside ``quad_px`` (back-left, back-right, front-right, front-left, pixels).
-
-    Returns {"front": [[x,y],...], "back": [[x,y],...], "count": bays, "spacing_cv", "spacing_px"} with one
-    image point per divider on the front and on the back edge (left->right), or None when no regular set of
-    dividers is found.
-    """
+    Returns {"front", "back" (one point per divider, left->right), "count", "spacing_cv", "spacing_px"} or None."""
     r1 = _rectify(frames, quad_px)
     if r1 is None:
         return None

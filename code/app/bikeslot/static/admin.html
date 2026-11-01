@@ -34,7 +34,32 @@
       </button>
       <p class="links"><a href="/">User page</a></p>
     </header>
-    <main class="content" style="gap: 24px">
+    <nav class="tabs" role="tablist" aria-label="Views">
+      <button type="button" role="tab" class="tab" id="tab-camera" data-tab="camera" aria-controls="view-camera" aria-selected="true">Camera</button>
+      <button type="button" role="tab" class="tab" id="tab-statistics" data-tab="statistics" aria-controls="view-statistics" aria-selected="false" tabindex="-1">Statistics</button>
+    </nav>
+    <main class="content stages" id="view-camera" role="tabpanel" aria-labelledby="tab-camera">
+      <p class="empty" id="stages-note" hidden>No rack in the racks file is read from the vision service.</p>
+      <article class="stage" data-stage="camera">
+        <h2>1 · Live camera</h2>
+        <img alt="Newest camera picture, people blurred">
+        <p class="stage-chips" data-f="chips"></p>
+        <p class="stage-line">The picture as the camera sends it, people blurred on the camera. It is lined up with a saved picture of the rack, so the 19 hooks always sit in the same place.</p>
+      </article>
+      <article class="stage" data-stage="hooks">
+        <h2>2 · Model 1: hook classifier</h2>
+        <img alt="Each hook coloured by the hook classifier alone, with its score">
+        <p class="stage-chips" data-f="chips"></p>
+        <p class="stage-line">A small neural network (MobileNetV3, trained on this camera) looks at each hook on its own and gives the chance that a bike hangs there. Red: bike, green: free, grey: unsure. On its own it also lights up the hooks next to a bike.</p>
+      </article>
+      <article class="stage" data-stage="bikes">
+        <h2>3 · Model 2: bike finder and final answer</h2>
+        <img alt="Final answer per hook with the bikes the bike finder found">
+        <p class="stage-chips" data-f="chips"></p>
+        <p class="stage-line">Grounding DINO counts the bikes. A lit hook is freed only when it can be nothing but the overlap of a bike found next to it; when unsure, a hook stays taken. This is what the app shows.</p>
+      </article>
+    </main>
+    <main class="content" id="view-statistics" role="tabpanel" aria-labelledby="tab-statistics" style="gap: 24px" hidden>
       <section class="section">
         <div class="section-head">
           <h2>Cameras</h2>
@@ -64,7 +89,7 @@
         </div>
         <div class="flow-wrap">
           <figure class="flow" id="flow" style="margin: 0" data-level="overview" tabindex="-1">
-            <svg viewBox="0 0 1200 160" role="img" aria-label="Data flow: the camera node sends pictures and health answers to the app, the app passes each picture to the detector, the detector answers per space, the app deletes the picture and then applies its rules, and the user and admin pages each ask for the results in their own loop. Zoom in to see the parts of each step, side by side where they run in parallel.">
+            <svg viewBox="0 0 1200 160" role="img" aria-label="Data flow: the camera node blurs each picture and posts it with its health to the relay, the vision service pulls the newest picture from the relay and answers free or taken per hook, the app reads that answer and applies its rules, and the user and admin pages each ask for the results in their own loop. Zoom in to see the parts of each step, side by side where they run in parallel.">
               <defs>
                 <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" data-size="12" orient="auto-start-reverse">
                   <path d="M0 0L10 5L0 10z" class="arrowhead"/>
@@ -78,16 +103,17 @@
                 <line class="edge" x1="150" y1="80" x2="260" y2="80" marker-end="url(#arrow)"/>
                 <line class="edge-health" x1="150" y1="103" x2="260" y2="103" marker-end="url(#arrow-small)"/>
                 <line class="edge" x1="412" y1="80" x2="522" y2="80" marker-end="url(#arrow)"/>
+                <line class="edge-health" x1="412" y1="103" x2="522" y2="103" marker-end="url(#arrow-small)"/>
                 <line class="edge" x1="674" y1="80" x2="784" y2="80" marker-end="url(#arrow)"/>
                 <line class="edge" x1="936" y1="80" x2="1046" y2="80" marker-end="url(#arrow)"/>
                 <!-- texts set by renderFlow; the small lines show when zoomed in, short enough for the margin beside a step -->
-                <text class="edge-label" data-edge="0" x="206" y="70" text-anchor="middle">picture, health</text>
+                <text class="edge-label" data-edge="0" x="206" y="70" text-anchor="middle">HTTPS POST</text>
                 <text class="edge-note" data-edge="0" x="206" y="97" text-anchor="middle"></text>
                 <text class="edge-small" data-edge="0" x="206" y="76" text-anchor="middle"></text>
-                <text class="edge-label" data-edge="1" x="468" y="70" text-anchor="middle">picture</text>
+                <text class="edge-label" data-edge="1" x="468" y="70" text-anchor="middle">newest picture</text>
                 <text class="edge-note" data-edge="1" x="468" y="97" text-anchor="middle"></text>
                 <text class="edge-small" data-edge="1" x="468" y="76" text-anchor="middle"></text>
-                <text class="edge-label" data-edge="2" x="730" y="70" text-anchor="middle">answer per space</text>
+                <text class="edge-label" data-edge="2" x="730" y="70" text-anchor="middle">answer per hook</text>
                 <text class="edge-note" data-edge="2" x="730" y="97" text-anchor="middle"></text>
                 <text class="edge-small" data-edge="2" x="730" y="76" text-anchor="middle"></text>
                 <text class="edge-label" data-edge="3" x="992" y="70" text-anchor="middle">free per bike parking</text>
@@ -98,8 +124,8 @@
               <circle class="packet" id="packet" r="7" data-runs="0">
                 <animateMotion id="packet-anim" dur="3s" begin="indefinite" fill="freeze" calcMode="linear"><mpath href="#flow-path"/></animateMotion>
               </circle>
-              <!-- the health lane from the camera into the app, shown only when zoomed in -->
-              <path id="health-path" d="M26 103H400" fill="none" stroke="none"/>
+              <!-- the health lane from the camera through the relay into the vision service, shown only when zoomed in -->
+              <path id="health-path" d="M26 103H662" fill="none" stroke="none"/>
               <circle class="pulse" id="pulse" r="1.6">
                 <animateMotion id="pulse-anim" dur="1.2s" begin="indefinite" fill="freeze" calcMode="linear"><mpath href="#health-path"/></animateMotion>
               </circle>
@@ -107,36 +133,36 @@
                 <rect class="node-box" x="0" y="38" width="150" height="84" rx="12"/>
                 <g class="overview">
                   <text class="node-title" x="16" y="66">Camera node</text>
-                  <text class="node-sub" x="16" y="85">ESP32-S3 board</text>
+                  <text class="node-sub" x="16" y="85">XIAO ESP32-S3</text>
                   <circle class="dot" cx="22" cy="107" r="5"/>
                   <text class="node-status" x="33" y="111">...</text>
                 </g>
                 <g class="inside" aria-hidden="true"></g>
               </g>
-              <g class="node" data-node="receive" tabindex="0" role="button" aria-label="App receives, show details">
+              <g class="node" data-node="relay" tabindex="0" role="button" aria-label="Relay, show details">
                 <rect class="node-box" x="262" y="38" width="150" height="84" rx="12"/>
                 <g class="overview">
-                  <text class="node-title" x="278" y="66">App receives</text>
-                  <text class="node-sub" x="278" y="85">held in memory</text>
+                  <text class="node-title" x="278" y="66">Relay</text>
+                  <text class="node-sub" x="278" y="85">newest picture only</text>
                   <circle class="dot" cx="284" cy="107" r="5"/>
                   <text class="node-status" x="295" y="111">...</text>
                 </g>
                 <g class="inside" aria-hidden="true"></g>
               </g>
-              <g class="node" data-node="detector" tabindex="0" role="button" aria-label="Detector, show details">
+              <g class="node" data-node="vision" tabindex="0" role="button" aria-label="Vision service, show details">
                 <rect class="node-box" x="524" y="38" width="150" height="84" rx="12"/>
                 <g class="overview">
-                  <text class="node-title" x="540" y="66">Detector</text>
-                  <text class="node-sub" x="540" y="85">bikes per slot box</text>
+                  <text class="node-title" x="540" y="66">Vision service</text>
+                  <text class="node-sub" x="540" y="85">free or taken per hook</text>
                   <circle class="dot" cx="546" cy="107" r="5"/>
                   <text class="node-status" x="557" y="111">...</text>
                 </g>
                 <g class="inside" aria-hidden="true"></g>
               </g>
-              <g class="node" data-node="decide" tabindex="0" role="button" aria-label="App decides, show details">
+              <g class="node" data-node="decide" tabindex="0" role="button" aria-label="Web app, show details">
                 <rect class="node-box" x="786" y="38" width="150" height="84" rx="12"/>
                 <g class="overview">
-                  <text class="node-title" x="802" y="66">App decides</text>
+                  <text class="node-title" x="802" y="66">Web app</text>
                   <text class="node-sub" x="802" y="85">applies the rules</text>
                   <circle class="dot" cx="808" cy="107" r="5"/>
                   <text class="node-status" x="819" y="111">...</text>
@@ -162,9 +188,9 @@
             <nav class="flow-steps" id="flow-steps" aria-label="Steps">
               <button type="button" id="flow-prev" aria-label="Previous step">&larr;</button>
               <button type="button" data-step="camera">Camera</button>
-              <button type="button" data-step="receive">Receives</button>
-              <button type="button" data-step="detector">Detector</button>
-              <button type="button" data-step="decide">Decides</button>
+              <button type="button" data-step="relay">Relay</button>
+              <button type="button" data-step="vision">Vision</button>
+              <button type="button" data-step="decide">Web app</button>
               <button type="button" data-step="pages">Pages</button>
               <button type="button" id="flow-next" aria-label="Next step">&rarr;</button>
             </nav>

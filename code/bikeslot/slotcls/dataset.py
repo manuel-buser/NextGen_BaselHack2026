@@ -1,16 +1,12 @@
 """Labelled crops for training / evaluation.
 
-Label files are small JSON documents next to the images (one entry per frame, one label per slot - what the
-labelling tool writes, what ``golden_labels.json`` looks like):
+Label files (as written by slotcls_label.py, like golden_labels.json), paths relative to the file:
 
     {"camera_id": "demo01", "layout": "demo_picture.layout.json",
      "frames": [{"file": "demo_picture.jpeg", "slots": {"demo01-S01": "free", "demo01-S03": "occupied", ...}}]}
 
-Relative paths are resolved against the label file's directory.  Slots missing from a frame's ``slots`` or
-labelled ``unknown`` are skipped.  Crops are cut from the full-resolution frames at load time (nothing is
-duplicated on disk): every sample keeps a *context patch* (the polygon grown by ``context`` and warped to
-``ctx_scale`` times the input size) so that training-time augmentation can shift / zoom / rotate the crop
-inside real surroundings instead of padding with black.
+Missing or ``unknown`` slots are skipped. Each sample keeps a larger context patch so augmentation can shift, zoom
+and rotate inside real surroundings instead of padding with black.
 """
 from __future__ import annotations
 

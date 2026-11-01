@@ -104,7 +104,7 @@ def main(outdir: Path) -> None:
                     for name, (width, height) in VIEWPORTS.items():
                         context = browser.new_context(viewport={"width": width, "height": height}, color_scheme=scheme, device_scale_factor=2 if name == "phone" else 1)
                         page = context.new_page()
-                        for path, label in (("/", "user"), ("/admin", "admin")):
+                        for path, label in (("/", "user"), ("/admin#statistics", "admin")):
                             refresh_live(base)
                             page.goto(base + path)
                             page.wait_for_selector(".tile[data-rack], .stat")
@@ -162,7 +162,7 @@ def main(outdir: Path) -> None:
                                 page.locator(".flow-wrap").screenshot(path=str(target))
                                 print(target)
                                 page.evaluate("document.querySelector('#flow svg').unpauseAnimations()")
-                                for step in ("receive", "detector", "decide", "pages"):
+                                for step in ("relay", "vision", "decide", "pages"):
                                     page.click("#flow-next")
                                     page.wait_for_selector(f"#flow-steps [data-step='{step}'][aria-current='step']")
                                     page.wait_for_timeout(900)  # the pan settles

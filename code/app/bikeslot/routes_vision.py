@@ -16,6 +16,7 @@ from .vision import ingest_vision
 
 router = APIRouter(prefix="/api/vision", tags=["vision"])
 PREVIEW_TIMEOUT_S = 5.0
+STAGES = ("camera", "hooks", "bikes")   # the vision service's GET /cameras/{camera}/stage/{name}.jpg
 
 
 def vision_rack_or_404(request: Request, rack_id: str) -> Rack:
@@ -42,15 +43,41 @@ async def pushed_status(rack_id: str, request: Request) -> JSONResponse:
     return JSONResponse(body, status_code=code)
 
 
-@router.get("/{rack_id}/preview.jpg")
-async def preview(rack_id: str, request: Request) -> Response:
-    """The service's last preview for this rack's camera: persons blurred by the service, slots drawn in colour."""
+async def from_vision(request: Request, rack_id: str, path: str) -> httpx.Response:
+    """GET {url}/cameras/{camera}/{path} of this rack's vision service: 404 in push mode, 502 when the service fails."""
     rack = vision_rack_or_404(request, rack_id)
     if rack.vision.url is None:
-        raise HTTPException(status_code=404, detail="push mode: the app has no address to fetch the preview from")
+        raise HTTPException(status_code=404, detail="push mode: the app has no address to fetch from")
     try:
-        response = await request.app.state.vision_http.get(rack.vision.preview_url, timeout=PREVIEW_TIMEOUT_S)
+        response = await request.app.state.vision_http.get(f"{rack.vision.url}/cameras/{rack.vision.camera}/{path}",
+                                                           timeout=PREVIEW_TIMEOUT_S)
         response.raise_for_status()
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"vision service: {describe(exc)}")
+    return response
+
+
+@router.get("/{rack_id}/preview.jpg")
+async def preview(rack_id: str, request: Request) -> Response:
+    """The service's last preview for this rack's camera: persons blurred by the service, slots drawn in colour."""
+    response = await from_vision(request, rack_id, "preview.jpg")
     return Response(response.content, media_type=response.headers.get("content-type", "image/jpeg"), headers={"Cache-Control": "no-store"})
+
+
+@router.get("/{rack_id}/stage/{name}.jpg")
+async def stage(rack_id: str, name: str, request: Request) -> Response:
+    """One step of the live processing for the admin page's Camera tab: camera, hooks (model 1) or bikes (model 2)."""
+    if name not in STAGES:
+        raise HTTPException(status_code=404, detail=f"unknown step {name!r}, one of {', '.join(STAGES)}")
+    response = await from_vision(request, rack_id, f"stage/{name}.jpg")
+    return Response(response.content, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@router.get("/{rack_id}/stages")
+async def stage_counts(rack_id: str, request: Request) -> JSONResponse:
+    """Counts and timings that go with the stage pictures."""
+    response = await from_vision(request, rack_id, "stages")
+    try:
+        return JSONResponse(response.json(), headers={"Cache-Control": "no-store"})
+    except ValueError:
+        raise HTTPException(status_code=502, detail="vision service: stages are not JSON")

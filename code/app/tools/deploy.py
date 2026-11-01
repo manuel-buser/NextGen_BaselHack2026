@@ -256,9 +256,22 @@ def stop(procs: dict, interrupted: bool) -> None:
     say("Everything stopped (app, demo feed, tunnel).")
 
 
+def in_use(port: int) -> bool:
+    with socket.socket() as probe:
+        return probe.connect_ex(("127.0.0.1", port)) == 0
+
+
+def free_port(first: int) -> int:
+    """`first`, or the next port above it that nothing listens on (the vision service may have taken 8002)."""
+    port = next(p for p in range(first, first + 100) if not in_use(p))
+    if port != first:
+        say(f"Port {first} is in use, so the app takes {port}.")
+    return port
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--port", type=int, default=8002, help="local port of the app (default 8002; the vision service uses 8000)")
+    parser.add_argument("--port", type=int, help="local port of the app (default: 8002, or the next free one above it)")
     parser.add_argument("--racks", default="racks.demo.yaml", help="racks file, relative to code/app")
     parser.add_argument("--live", action="store_true", help="the real camera feeds its rack (CAMERA_PULL=1); the feed only feeds the demo racks")
     parser.add_argument("--qr", metavar="LINK", help=argparse.SUPPRESS)  # used by this script inside the app's .venv
@@ -266,12 +279,14 @@ def main() -> None:
     if args.qr:
         print_qr(args.qr)
         return
-    racks, local = APP / args.racks, f"http://127.0.0.1:{args.port}"
+    racks = APP / args.racks
     if not racks.exists():
         sys.exit(f"{racks} not found")
-    with socket.socket() as probe:
-        if probe.connect_ex(("127.0.0.1", args.port)) == 0:
-            sys.exit(f"Port {args.port} is already in use: stop that program, or pick another port with --port.")
+    if args.port is None:
+        args.port = free_port(8002)
+    elif in_use(args.port):
+        sys.exit(f"Port {args.port} is already in use: stop that program, or pick another port with --port.")
+    local = f"http://127.0.0.1:{args.port}"
     os.environ.pop("VIRTUAL_ENV", None)  # another activated venv only makes uv warn; it uses code/app/.venv anyway
     uv, cloudflared = prepare()
     uv_run = [uv, "run", "--no-sync"]  # the checked environment as it is: no installs behind the question's back

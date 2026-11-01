@@ -3,10 +3,8 @@
 Usage (from the repo root):
     .venv/Scripts/python code/scripts/calib_bench.py [--what golden|gpt|all] [--vlm 0|1|both] [--previews DIR]
 
-For every scene the layout is proposed from the image(s) without any admin correction, then the occupancy
-of the same image(s) is computed with that raw proposal.  Golden: per-slot states vs the hand labels
-(3 images x 9 slots).  Generated scenes have no labels: "placed" = slots occupied vs bikes detected (every
-bike should land in a slot of its own).  Previews with the proposal drawn are written to --previews.
+The raw proposal (no admin) is scored on the same image(s): golden per-slot states vs the hand labels (3 x 9 slots);
+generated scenes have no labels, so "placed" = slots occupied vs bikes detected.
 """
 from __future__ import annotations
 

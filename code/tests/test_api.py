@@ -22,6 +22,18 @@ def test_health_and_seeded_golden_camera(client):
     assert cams["cam01"]["layout_status"] == "confirmed" and cams["cam01"]["slot_count"] == 9
 
 
+def test_reference_put_get_delete(client):
+    assert client.put("/cameras/regcam/reference?latest=true").status_code == 409   # no picture received yet
+    data = (config.ROOT / "assets" / "pictures" / "DemoPictures" / "memox_01.jpeg").read_bytes()
+    r = client.put("/cameras/regcam/reference", content=data, headers={"Content-Type": "image/jpeg"})
+    assert r.status_code == 200, r.text
+    assert r.json()["size"] == [1600, 900] and r.json()["features"] > 100
+    assert client.get("/cameras/regcam/reference").json()["reference"]["features"] == r.json()["features"]
+    assert "regcam" in client.get("/health").json()["registration"]["cameras"]
+    assert client.delete("/cameras/regcam/reference").json()["ok"]
+    assert client.get("/cameras/regcam/reference").json()["reference"] is None
+
+
 def test_post_frame_raw_and_multipart(client):
     data = (config.GOLDEN_DIR / "bikeparking_cam01_003.png").read_bytes()
     r = client.post("/cameras/cam01/frames", content=data, headers={"Content-Type": "image/jpeg"})
