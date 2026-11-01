@@ -131,10 +131,6 @@ class VisionSource:
     def status_url(self) -> str:
         return f"{self.url}/cameras/{self.camera}/status"
 
-    @property
-    def preview_url(self) -> str:
-        return f"{self.url}/cameras/{self.camera}/preview.jpg"
-
 
 def vision_from_yaml(raw: dict | None, rack_id: str, default_poll_s: float) -> VisionSource | None:
     if raw is None:

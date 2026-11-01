@@ -18,7 +18,7 @@ racks:
     layout: {rows: 1, cols: 19, bearing: 118, space_m: [0.5, 1.2]}
     # The real camera, read through the vision service on this laptop (code/bikeslot): it fetches the pictures,
     # decides free or occupied per hook and the app reads the result. Without data every hook counts as occupied.
-    vision: {url: "http://127.0.0.1:8000", camera: live01}
+    vision: {url: "http://127.0.0.1:8000", camera: live01, poll_s: 1}
   - id: A3
     name: Peter Merian-Weg 3
     group: Peter Merian-Weg

@@ -42,3 +42,6 @@ assets/models/*
 
 # Training data
 assets/pictures/*
+
+# Personal working notes (not shared)
+my_docs/

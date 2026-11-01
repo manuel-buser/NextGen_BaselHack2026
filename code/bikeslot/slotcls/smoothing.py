@@ -1,8 +1,7 @@
-"""Temporal smoothing: majority vote over the last N frames + hysteresis.
+"""Temporal smoothing: ``occupancy.SlotTracker`` (vote window + hysteresis) fed with classifier probabilities.
 
-Reuses ``occupancy.SlotTracker`` (the vote window with hysteresis of the detector pipeline) and only adds the
-probability -> vote step: a classifier output within ``unsure_band`` of 0.5 casts no vote at all, so a
-person walking through or a bike half-way into the hook neither flips nor refreshes the state.
+A probability within ``unsure_band`` of 0.5 casts no vote, so a passer-by or a half-parked bike neither flips nor
+refreshes the state.
 """
 from __future__ import annotations
 
@@ -20,10 +19,17 @@ def vote_from_prob(p: Optional[float], unsure_band: float = config.SLOTCLS_UNSUR
 
 
 def make_trackers(layout: Layout) -> dict[str, SlotTracker]:
+    """Per camera (layout.params): k_frames, min_frames, and occupied_above / free_below for the vote mean - e.g.
+    k_frames 2, occupied_above 0.5, free_below 0.0: occupied on the first occupied vote, free only after two free
+    votes in a row (a wrong "free" is the error that must not happen)."""
     p = layout.params or {}
     k = int(p.get("k_frames", config.SLOTCLS_K_FRAMES))
     min_frames = int(p.get("min_frames", config.SLOTCLS_MIN_FRAMES))
-    return {s.slot_id: SlotTracker(s.slot_id, k=k, min_frames=min_frames) for s in layout.slots}
+    above, below = p.get("occupied_above"), p.get("free_below")
+    return {s.slot_id: SlotTracker(s.slot_id, k=k, min_frames=min_frames,
+                                   occupied_above=None if above is None else float(above),
+                                   free_below=None if below is None else float(below))
+            for s in layout.slots}
 
 
 def update(trackers: dict[str, SlotTracker], probs: dict[str, Optional[float]],

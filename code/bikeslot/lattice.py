@@ -1,26 +1,12 @@
 """1-D projective lattice: a row of equally spaced slots seen in perspective (calibration helper).
 
-Equally spaced world positions X_n = n * P (n = 0, 1, 2, ...) along a straight row do NOT project to a
-constant pixel pitch.  Along the image line of the row they form a 1-D homography
-
     u(n)     = (a*n + b) / (c*n + 1)      b = u(0), a/c = vanishing point of the row, c = foreshortening
     n(u)     = (u - b) / (a - c*u)        continuous lattice index of any point on the line
     pitch(n) = du/dn = (a - b*c) / (c*n + 1)^2
 
-so comparing a gap at the far end of a rack with the median pitch of the whole rack confuses perspective
-with "a stand is hidden here".  In lattice units every slot is exactly 1.0 wide, hidden stands sit at the
-missing integers, slot boundaries at the half-integers are the perspective-correct ones, and "is that end
-bike in an extra slot or just leaning away from the last stand?" becomes a question of whether its index
-is nearer to n_max + 1 than to n_max.
-
-fit(): combinatorial integer-gap RANSAC.  For pairs (affine, c = 0) and triplets of neighbouring anchors
-and hypothesised integer gaps (1..MAX_GAP) between them the system  n*a + b - (n*u)*c = u  is solved
-exactly, every anchor is scored by its distance to the nearest lattice position, and the best hypothesis
-is refined by weighted least squares on its inliers.  Strong anchors (stand bases) must sit at integer
-indices.  Weak anchors (parked bikes) count half and only have to be *consistent with each other*: bikes
-lean on one side of a stirrup, so they sit at integer + phase, and the phase is free.  Lattice positions
-between the outermost anchors without any anchor cost a little, so a half-pitch lattice (every second slot
-empty) never beats the plain one.  Pure numpy, a few milliseconds.
+In lattice units every slot is 1.0 wide, hidden stands sit at missing integers and boundaries at half-integers.
+fit() is an integer-gap RANSAC over anchor pairs/triplets: strong anchors (stands) must sit on integers, weak ones
+(bikes, half weight) only share a free phase, and empty lattice positions cost a little so half-pitch never wins.
 """
 from __future__ import annotations
 
@@ -283,13 +269,10 @@ def _rescale(lat: Lattice, m: float, k: float) -> Lattice:
 
 def fit(strong: Sequence[float], weak: Sequence[float] = (), max_gap: int = MAX_GAP,
         pitch_range: Optional[tuple[float, float]] = None) -> Optional[Lattice]:
-    """Fit the lattice to 1-D axis coordinates of stand bases (``strong``) and parked bikes (``weak``).
+    """Fit the lattice to axis coordinates of stand bases (``strong``) and bikes (``weak``); None if nothing fits.
 
-    Needs at least 2 anchors in total; with only 2 the lattice is affine.  ``pitch_range`` bounds the pixel
-    pitch at the ends of the row (from the bike size).  Returns None when nothing plausible fits.  Indices
-    in the result refer to the order of the inputs; n_min..n_max is the index range covered by stands (or
-    by bikes when there are no stands on the lattice).
-    """
+    At least 2 anchors (2 = affine). ``pitch_range`` bounds the end pitch in pixels. n_min..n_max is the index range
+    covered by stands (by bikes when no stand is on the lattice)."""
     s = np.asarray(strong, dtype=np.float64).ravel()
     w = np.asarray(weak, dtype=np.float64).ravel()
     both = np.concatenate([s, w])
@@ -343,13 +326,10 @@ def support(lat: Lattice, strong: Sequence[float] = (), half: Sequence[float] = 
 
 def extend(lat: Lattice, us: Sequence[float], bias: float = 0.0, overhang: float = OVERHANG,
            max_extra: int = MAX_EXTRA, strong_us: Sequence[float] = ()) -> Lattice:
-    """Add the end slots implied by bikes (``us``) or stands (``strong_us``) beyond the outermost anchors
-    of the lattice.
+    """Add the end slots implied by bikes (``us``) or stands (``strong_us``) beyond the outermost anchors.
 
-    A bike whose index (minus ``bias``, the typical offset of bikes from their stand) lies more than
-    ``overhang`` beyond n_max occupies slot n_max + 1 (its stand is hidden behind it); closer than that it
-    is leaning away from the last slot.  A stand beyond the range is a slot wherever it rounds to.
-    """
+    A bike more than ``overhang`` beyond n_max (after subtracting ``bias``, its usual offset from the stand) is in
+    slot n_max + 1; closer, it only leans away from the last slot. A stand beyond the range is a slot where it rounds."""
     left = right = 0
     for u, off, ovh in [(x, bias, overhang) for x in us] + [(x, 0.0, 0.5) for x in strong_us]:
         nh = lat.n(float(u)) - off
@@ -370,8 +350,5 @@ def extend(lat: Lattice, us: Sequence[float], bias: float = 0.0, overhang: float
 
 def phase(lat: Lattice, us: Sequence[float]) -> tuple[float, float]:
     """Circular mean of the fractional lattice index of ``us`` -> (phase in [-0.5, 0.5), concentration 0..1).
-
-    Painted bay dividers at phase +-0.5 mean the stands are centred in their bays; bikes at phase 0.3
-    mean bikes typically stand 0.3 slot to the right of their stand (useful as ``bias`` for extend()).
-    """
+    E.g. dividers at +-0.5: stands centred in their bays; bikes at 0.3: the ``bias`` for extend()."""
     return _circular_mean(np.asarray([lat.n(float(u)) for u in us], dtype=np.float64))

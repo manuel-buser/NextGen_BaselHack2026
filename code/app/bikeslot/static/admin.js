@@ -64,48 +64,41 @@ let lastHealthKey = null;
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const PACKET_MS = 3000; // the dur of #packet-anim
 const PULSE_MS = 1200; // the dur of #pulse-anim
-/* Defaults of the app and of a rack's camera block; the status does not report them */
-const PULL_HEALTH_S = 5;
-const PULL_PICTURE_S = 10;
+/* Defaults of the app, the relay (relay/app.py) and the vision service (code/bikeslot/config.py); the status does not report them */
 const HOT_LIMIT_C = 75;
-const DETECTOR_TIMEOUT_S = 15;
+const RELAY_ONLINE_S = 30; // the relay's ONLINE_TIMEOUT_S: a camera without a push for this long is offline
+const VISION_PULL_S = 1; // PULL_INTERVAL: the vision service asks the relay for a picture this often
+const VISION_MAX_AGE_S = 60; // PULL_MAX_AGE_S: an older picture at the relay is not used
+const VISION_POLL_S = 3; // the app's VISION_POLL_S, when the status has no vision camera to report it
 
 /* Lanes inside each step, parts in the order they happen: [id, label], a third item true marks a planned part.
    The first lane is the picture lane on the line the arrows use; a quieter second lane runs below it. joins: the side
-   where a lane runs on into the next step; loop: drawn as a loop; clock: the step has a clock rule as a side note.
-   flowNodes() supplies the values and the labels that depend on the mode. */
+   where a lane runs on into the next step ("left", "right" or "both"); loop: drawn as a loop; clock: the step has a
+   clock rule as a side note. flowNodes() supplies the values. */
 const FLOW_PARTS = {
   camera: {
     lanes: [
-      { tag: "picture", parts: [["heat", "heat guard on the board"], ["capture", "take picture"], ["send", "picture out"]] },
-      { tag: "health", joins: "right", parts: [["sensors", "temperature, WiFi, memory, uptime"], ["alive", "health answer"]] },
+      { tag: "picture", parts: [["capture", "take picture, 800 x 600"], ["privacy", "black strips, blur people"], ["send", "HTTPS POST to the relay"]] },
+      { tag: "health", joins: "right", parts: [["sensors", "temperature, WiFi, uptime"], ["alive", "health to the relay"]] },
     ],
   },
-  receive: {
+  relay: {
     clock: true,
     lanes: [
-      { tag: "picture", parts: [["endpoint", "picture in, counted"], ["memory", "size noted, held for this request"], ["forward", "to the detector"]] },
-      { tag: "health", joins: "left", parts: [["alive", "health or alive in"], ["fields", "fields mapped"], ["hot", "too hot if no flag"], ["online", "camera online"]] },
+      { tag: "picture", parts: [["in", "picture in"], ["memory", "newest only, in memory"], ["snapshot", "GET /snapshot"]] },
+      { tag: "health", joins: "both", parts: [["health", "health in"], ["online", "GET /health"]] },
     ],
   },
-  detector: {
-    http: {
-      lanes: [
-        { tag: "picture", parts: [["analyze", `POST /analyze, ${DETECTOR_TIMEOUT_S} s timeout`], ["blur", "blur people", true], ["bikes", "find bikes, pre-trained model"], ["match", "match slot boxes"], ["answer", "answer per space"]] },
-        { tag: "health check", parts: [["health", "health check"], ["model", "model"]] },
-      ],
-    },
-    fake: {
-      lanes: [
-        { tag: "picture", parts: [["standin", "built-in stand-in"], ["made", "made-up answer"], ["answer", "answer per space"]] },
-        { tag: "health check", parts: [["health", "health check"], ["model", "model"]] },
-      ],
-    },
+  vision: {
+    lanes: [
+      { tag: "picture", parts: [["pull", `pull every ${VISION_PULL_S} s`], ["age", `over ${VISION_MAX_AGE_S} s old: skipped`], ["align", "line up with the rack"], ["process", "image processing"], ["hooks", "free or taken per hook"]] },
+      { tag: "health", joins: "left", parts: [["health", "camera health read"], ["online", "camera status"]] },
+    ],
   },
   decide: {
     clock: true,
     lanes: [
-      { tag: "picture", parts: [["discard", "picture deleted"], ["confidence", "confidence rule"], ["window", "picture rule"], ["counts", "free count per bike parking"], ["history", "history sample"]] },
+      { tag: "answer", parts: [["read", "asks for the status"], ["fresh", "newly decided picture"], ["evidence", "no evidence: taken"], ["counts", "free count per bike parking"], ["history", "history sample"]] },
     ],
   },
   pages: {
@@ -123,46 +116,36 @@ function short(text, max = 24) {
 
 function flowNodes(status) {
   const cams = status.cameras;
-  const real = cams.filter((c) => !c.demo);
   const online = cams.filter((c) => c.online).length;
   const hot = cams.filter((c) => c.too_hot).length;
   const seen = cams.filter((c) => c.last_alive_at !== null).length;
   const pictures = cams.reduce((sum, c) => sum + c.pictures, 0);
   const youngest = (key) => cams.reduce((best, c) => (c[key] !== null && (best === null || c[key] < best) ? c[key] : best), null);
   const lastPicture = youngest("picture_age_s");
-  const lastAlive = youngest("alive_age_s");
   const temps = cams.filter((c) => c.temp_c !== null).map((c) => c.temp_c);
   const signals = cams.map((c) => c.node.wifi_rssi_dbm).filter((dbm) => dbm !== null);
   const blocks = cams.map((c) => c.node.heap_largest_block).filter((bytes) => bytes !== null);
-  const reporting = cams.filter((c) => c.temp_c !== null || c.node.uptime_s !== null || c.node.wifi_rssi_dbm !== null).length;
-  const derived = cams.filter((c) => c.too_hot_derived).length;
-  const lastKb = cams.some((c) => c.last_picture_bytes) ? `${Math.round(Math.max(...cams.map((c) => c.last_picture_bytes)) / 1024)} KB` : null;
-  const d = status.detector;
-  const r = status.detector_results;
-  const fake = d.mode === "fake";
   const app = status.app;
   const live = status.racks.filter((k) => k.status === "ok");
   const staleRacks = status.racks.filter((k) => k.status === "stale").length;
   const totalFree = live.reduce((sum, k) => sum + k.free, 0);
-  const slots = status.racks.flatMap((k) => k.slots);
   const stale = app.stale_after_s;
   const receiving = lastPicture !== null && lastPicture <= stale;
-  const deciding = r.ok_age_s !== null && r.ok_age_s <= stale;
-  const decideState = deciding ? "good" : r.last_ok_at ? "warning" : "muted";
-  const healthModel = d.info.model ?? "unknown";
-  const model = r.model ?? healthModel;
-  const sources = new Set(real.map((c) => c.source).filter(Boolean));
-  const mode = sources.size === 2 ? "mixed" : sources.has("pull") ? "pull" : sources.has("push") ? "push" : null;
   const readings = [
     temps.length ? `${Math.round(Math.max(...temps))} C` : "",
     signals.length ? `${Math.min(...signals)} dBm` : "",
     blocks.length ? `${Math.round(Math.min(...blocks) / 1024)} KB block` : "",
   ].filter(Boolean).join(", ");
-  const realWords = {
-    pull: `pull: the app asks (health ${PULL_HEALTH_S} s, picture ${PULL_PICTURE_S} s)`,
-    push: "push: the node posts by itself",
-    mixed: real.filter((c) => c.source).map((c) => `${c.rack} ${c.source}`).join(", "),
-  };
+  // The real path: the camera read through the relay by the vision service (a rack with a vision block)
+  const vc = cams.find((c) => c.vision);
+  const v = vc?.vision ?? null;
+  const src = v?.source ?? null; // what the vision service learned from the relay's /health
+  const pollS = v?.poll_s ?? VISION_POLL_S;
+  const answering = !!vc && vc.alive_age_s !== null && vc.alive_age_s <= stale; // the service answered the app lately
+  const tracking = status.racks.find((k) => k.id === vc?.rack)?.tracking !== false;
+  const fresh = !!vc && vc.picture_age_s !== null && vc.picture_age_s <= stale;
+  const pullWords = { ok: "new picture", not_modified: "nothing newer", waiting: "no picture yet", stale: "too old, not used", error: "relay not reached", starting: "starting" };
+  const pullState = !src ? "muted" : { ok: "good", not_modified: "good", stale: "warning", error: "critical" }[src.state] ?? "muted";
 
   const camera = hot
     ? ["warning", `${hot} too hot`]
@@ -173,126 +156,108 @@ function flowNodes(status) {
         : seen
           ? ["critical", "offline"]
           : ["muted", "no camera yet"];
+  const relay = !vc ? ["muted", "no camera yet"]
+    : !answering || !src ? ["muted", "no report"]
+      : src.online === false ? ["critical", "camera silent"]
+        : src.state === "stale" ? ["warning", "old picture"]
+          : src.state === "waiting" ? ["muted", "no picture yet"]
+            : src.state === "error" ? ["critical", "not reached"]
+              : ["good", "camera online"];
+  const vision = !vc ? ["muted", "no camera yet"]
+    : !answering ? ["critical", "not answering"]
+      : v.online === false || !tracking ? ["warning", "no new picture"]
+        : ["good", "working"];
+  const decide = !vc ? (live.length ? ["good", "deciding"] : ["muted", "waiting"])
+    : !answering ? ["critical", "no answer"]
+      : !tracking ? ["warning", "all taken"]
+        : ["good", "deciding"];
   const pagesState = live.length === status.racks.length && live.length ? "good" : live.length ? "warning" : "muted";
-  const howCamera = {
-    pull: `The real camera is asked by the app (pull): every ${PULL_HEALTH_S} s for its health (chip temperature, WiFi signal, memory, uptime) and every ${PULL_PICTURE_S} s for a picture, the picture only after a good health answer in the same round.`,
-    push: "The real camera posts a picture and an alive message to the app by itself (push).",
-    mixed: `Some real cameras are asked by the app (pull: health every ${PULL_HEALTH_S} s, a picture every ${PULL_PICTURE_S} s after a good health answer), others post a picture and an alive message by themselves (push).`,
-  };
+  const hooks = v ? `${v.free ?? 0} free, ${v.occupied ?? 0} taken, ${v.unknown ?? 0} unknown` : "none yet";
   return {
     edges: [
-      mode === "pull"
-        ? ["app asks", [`picture every ${PULL_PICTURE_S} s`, `health every ${PULL_HEALTH_S} s`], ["", "app asks: health", `${PULL_HEALTH_S} s, picture ${PULL_PICTURE_S} s`]]
-        : mode === "push"
-          ? ["node posts", ["picture and alive", ""], ["", "node posts a", "picture and alive"]]
-          : mode === "mixed"
-            ? ["pull and push", ["picture and health", ""], ["", "pull: app asks", "push: node posts"]]
-            : ["picture, health", ["", ""], ["", "picture, health", ""]],
-      fake
-        ? ["picture", ["to the built-in", "stand-in"], ["", "picture in memory,", "to the stand-in"]]
-        : ["picture", ["held in memory", ""], ["", "picture held", "in memory"]],
-      ["answer per space", ["taken, free, unsure", "with a confidence"], ["", "taken, free or", "unsure per space"]],
+      ["HTTPS POST", ["picture and health", "over mobile data"], ["", "HTTPS POST over", "mobile data"]],
+      ["newest picture", [`pulled every ${VISION_PULL_S} s`, "with the health"], ["", `pulled every ${VISION_PULL_S} s,`, "with the health"]],
+      ["answer per hook", [`app asks every ${pollS} s`, "no picture"], ["", "app asks every", `${pollS} s, no picture`]],
       ["free per bike parking", ["user page asks 5 s", "admin page 3 s"], ["free per bike parking", "user page 5 s,", "admin page 3 s"]],
     ],
     camera: {
       state: camera[0],
       label: camera[1],
-      sub: { pull: "ESP32-S3, app asks", push: "ESP32-S3, it posts", mixed: "pull and push" }[mode] ?? "ESP32-S3 board",
-      title: "Camera node (ESP32-S3)",
-      text: `${howCamera[mode] ?? "No real camera has been heard from yet."} The heat guard runs on the board: above the hot limit it stops taking pictures. When the node sends no too-hot flag, the app works it out from the temperature (${HOT_LIMIT_C} C).`,
+      sub: "XIAO ESP32-S3",
+      title: "Camera node (XIAO ESP32-S3)",
+      text: `The camera takes an 800 x 600 picture, paints a strip at its top and bottom black (set per camera) and blurs people and number plates on the board, so an unblurred picture never leaves it. Every few seconds it posts the newest JPEG and its health (chip temperature, WiFi, uptime) by HTTPS to the relay, over a phone hotspot (mobile data). When the camera sends no too-hot flag, the app works it out from the temperature (${HOT_LIMIT_C} C).`,
       live: [], // the camera cards above show all of it
-      labels: {
-        capture: mode === "pull" ? "take picture if health ok" : "take picture",
-        send: { pull: "app fetches it", push: "node posts it" }[mode] ?? "picture out",
-        alive: { pull: "health answer", push: "alive message" }[mode] ?? "health or alive",
-      },
-      notes: {
-        mode: real.length ? `real camera, ${realWords[mode] ?? "not heard from yet"}` : "no real camera",
-      },
+      notes: { mode: "phone hotspot, mobile data" },
       parts: {
-        heat: [hot ? "warning" : temps.length ? "good" : "muted", hot ? `${hot} too hot: no pictures` : temps.length ? `hottest ${Math.round(Math.max(...temps))} C, none too hot` : "no reading"],
         capture: [receiving ? "good" : pictures ? "warning" : "muted", lastPicture === null ? "no picture yet" : ago(lastPicture)],
-        send: [pictures ? "good" : "muted", pictures ? `${pictures} sent${lastKb ? `, last ${lastKb}` : ""}` : "none yet"],
+        privacy: [pictures ? "good" : "muted", src?.last_people != null ? `last: ${src.last_people} people, ${src.last_plates ?? 0} plates` : "on the board"],
+        send: src ? [src.online ? "good" : "critical", src.pushes_ok != null ? `${src.pushes_ok} ok, ${src.pushes_failed ?? 0} failed` : "no count"] : [pictures ? "good" : "muted", pictures ? `${pictures} pictures` : "none yet"],
         sensors: [readings ? "good" : "muted", readings || "no reading yet"],
         alive: [camera[0], `${online} of ${cams.length} online`],
       },
     },
-    receive: {
-      state: receiving ? "good" : pictures ? "warning" : "muted",
-      label: receiving ? "receiving" : pictures ? "idle" : "waiting",
-      sub: "pictures and health",
-      title: "App receives the picture and the health answers",
-      text: `Two separate paths. Health: a health answer or alive message is mapped onto the camera's fields; when the node sends no too-hot flag, the app compares the temperature with ${HOT_LIMIT_C} C. A camera counts as online while answers arrive and as offline after ${stale} s without one. Pictures: each one is counted and its size noted, then held in memory for this one request only. It is never written to disk and never logged.`,
+    relay: {
+      state: relay[0],
+      label: relay[1],
+      sub: "newest picture only",
+      title: "Relay (public server)",
+      text: `The camera on the phone hotspot cannot be reached from the internet, so it posts to a small public server (Docker on a VPS, relay.manuel-buser.com). It keeps only the newest picture and the newest health of each camera, in memory: nothing is written to disk and there is no history. The vision service reads them with a view key: GET /snapshot for the picture, GET /health for online and last seen. On the clock: a camera without a push for ${RELAY_ONLINE_S} s counts as offline.`,
       live: [
-        ["Pictures received", `${pictures}`],
-        ["Last picture", lastPicture === null ? "never" : ago(lastPicture)],
-        ["Last size", lastKb ?? "n/a"],
-        ["Last health or alive", ago(lastAlive)],
-        ["Cameras online", `${online} of ${cams.length}`],
-        ["Too hot worked out by the app", `${derived}`],
+        ["Camera", src ? (src.online ? "online" : "offline") : "no report yet"],
+        ["Camera last seen", src?.last_seen_s != null ? ago(src.last_seen_s) : "n/a"],
+        ["Newest picture", src?.snapshot_age_s != null ? ago(src.snapshot_age_s) : "n/a"],
       ],
-      notes: { foot: `clock rule: offline after ${stale} s without an answer` },
+      notes: { mode: "public server, HTTPS", foot: `clock rule: offline after ${RELAY_ONLINE_S} s without a push` },
       parts: {
-        endpoint: [receiving ? "good" : pictures ? "warning" : "muted", `${pictures} received`],
-        memory: [pictures ? "good" : "muted", lastKb ? `last ${lastKb}, never stored` : "nothing yet"],
-        forward: fake ? ["good", "built-in stand-in"] : [d.reachable ? "good" : "critical", d.reachable ? "service reachable" : "service down"],
-        alive: [lastAlive !== null && lastAlive <= stale ? "good" : seen ? "critical" : "muted", lastAlive === null ? "none yet" : `last ${ago(lastAlive)}`],
-        fields: [reporting ? "good" : "muted", `${reporting} of ${cams.length} with readings`],
-        hot: [hot ? "warning" : temps.length ? "good" : "muted", `${HOT_LIMIT_C} C limit, ${hot} hot`],
-        online: [online ? "good" : seen ? "critical" : "muted", `${online} of ${cams.length} online`],
+        in: [relay[0], src?.snapshot_age_s != null ? `newest ${ago(src.snapshot_age_s)}` : "none yet"],
+        memory: [src?.snapshot_age_s != null ? "good" : "muted", "no disk, no history"],
+        snapshot: [pullState, "with the view key"],
+        health: [relay[0], src?.last_seen_s != null ? `camera seen ${ago(src.last_seen_s)}` : "none yet"],
+        online: [relay[0], src ? (src.online ? "camera online" : "camera offline") : "no report yet"],
       },
     },
-    detector: {
-      state: d.reachable ? "good" : "critical",
-      label: d.reachable ? (fake ? "stand-in" : "reachable") : "down",
-      sub: fake ? "built-in stand-in" : "bikes per slot box",
-      title: "Detector (recognition service)",
-      text: `${fake
-        ? "Built-in stand-in, no recognition: the app is set to use its stand-in for every bike parking (detector mode fake), so nothing is recognised. The stand-in makes up taken or free per space from the picture's bytes."
-        : `A real bike parking's picture goes to the recognition service (POST /analyze, ${DETECTOR_TIMEOUT_S} s timeout). It finds bikes with a pre-trained model, matches them to the slot boxes drawn once per camera and answers taken, free or unsure per space with a confidence. People are never reported; blurring them before recognition is being built, not running yet.`} The health check is separate: it runs only when this admin page asks, at most every 5 s. The last error is a status, not a step.`,
+    vision: {
+      state: vision[0],
+      label: vision[1],
+      sub: "free or taken per hook",
+      title: "Vision service (team laptop)",
+      text: `Runs on the team laptop with the GPU (port 8000). About every ${VISION_PULL_S} s it asks the relay for the newest picture and reads the camera's health from GET /health; a picture older than ${VISION_MAX_AGE_S} s is not used (the camera stopped sending). Each picture is lined up with a saved picture of the rack, so the hooks stay in place when the camera moves a little; a picture that does not line up is not used. Image processing then answers free, taken or unknown per hook${v?.slot_count ? ` (${v.slot_count} hooks)` : ""}. Previews show people blurred. A camera that went silent is reported offline.`,
       live: [
-        ["Mode", fake ? "fake (built-in stand-in, no recognition)" : esc(d.url)],
-        ["Reachable", d.reachable ? "yes" : `<span class="error">no: ${esc(d.error ?? "")}</span>`],
-        ["Model", fake ? "none" : esc(model)],
-        ["Last latency", r.last_latency_ms === null ? "n/a" : `${r.last_latency_ms} ms`],
-        ["Last error", r.last_error ? `<span class="error">${esc(r.last_error)}</span>` : "none"],
+        ["Service", v?.url ? esc(v.url) : "n/a"],
+        ["Answers the app", !vc ? "n/a" : answering ? `yes, ${ago(vc.alive_age_s)}` : "no"],
+        ["Camera", !v ? "n/a" : v.online === false ? "offline" : "online"],
+        ["Last picture used", v?.frame_age_s != null ? ago(v.frame_age_s) : "n/a"],
+        ["Hooks", hooks],
       ],
-      notes: {
-        mode: fake ? "built-in stand-in, no recognition" : `model: ${short(healthModel, 28)}`,
-        foot: fake ? "every bike parking gets the stand-in" : "",
-        status: `last error: ${r.last_error ? short(r.last_error, 18) : "none"}`,
-      },
+      notes: { mode: "team laptop, GPU", status: "previews: people blurred" },
       parts: {
-        standin: [d.reachable ? "good" : "critical", "no recognition"],
-        made: [decideState, "from the bytes, not the image"],
-        analyze: [decideState, r.last_latency_ms === null ? "no call yet" : `last ${r.last_latency_ms} ms`],
-        blur: ["muted", "planned, being built"],
-        bikes: [decideState, short(model)],
-        match: [slots.length ? "good" : "muted", "boxes drawn once per camera"],
-        answer: [decideState, fake ? (r.ok_age_s === null ? "none yet" : `last ${ago(r.ok_age_s)}`) : "taken, free or unsure, no people"],
-        health: [d.reachable ? "good" : "critical", d.reachable ? "when this page asks, 5 s at most" : `down: ${short(d.error ?? "", 20)}`],
-        model: [fake ? "muted" : d.reachable ? "good" : "critical", fake ? "none, stand-in" : short(healthModel)],
+        pull: [pullState, src ? pullWords[src.state] ?? src.state ?? "no report" : "no report"],
+        age: [!v || v.frame_age_s == null ? "muted" : v.frame_age_s <= VISION_MAX_AGE_S ? "good" : "warning", v?.frame_age_s != null ? `last used ${ago(v.frame_age_s)}` : "none yet"],
+        align: [vision[0], "saved picture of the rack"],
+        process: [vision[0], !vc ? "no camera yet" : answering ? (tracking ? "running" : "waiting for a picture") : "not answering"],
+        hooks: [vision[0], hooks],
+        health: [src ? "good" : "muted", src?.temperature_c != null ? `${Math.round(src.temperature_c)} C, ${src.wifi_rssi_dbm ?? "?"} dBm` : "no reading"],
+        online: [relay[0], !v ? "no report yet" : v.online === false ? "camera offline" : "camera online"],
       },
     },
     decide: {
-      state: decideState,
-      label: deciding ? "deciding" : r.last_ok_at ? "idle" : "waiting",
-      sub: "drops picture, rules",
-      title: "App drops the picture, then applies the rules",
-      text: `In this order. The picture is deleted right after the detector answers (or fails). Then the confidence rule: a free below ${app.min_confidence} confidence, or an unsure, counts as a bike. Then the ${app.free_after_clean}-picture rule: a space shows taken at once, and free only after ${app.free_after_clean} clean pictures in a row. Then the free count per bike parking, and one history sample per bike parking per minute (counts only, never which space was used when). Apart from this order, on the clock: a bike parking without a result for ${stale} s shows stale.`,
+      state: decide[0],
+      label: decide[1],
+      sub: "applies the rules",
+      title: "Web app reads the answer and applies the rules",
+      text: `The app asks the vision service for the camera's status every ${pollS} s (GET /cameras/${v?.camera ?? "live01"}/status); no picture reaches the app. A status with a new time is a newly decided picture, and its free and taken hooks are passed on as decided. Never free without evidence: an unknown hook or one the service does not report counts as taken, and when the service reports the camera offline, its picture is older than ${stale} s or the service does not answer, every hook counts as taken and the bike parking shows as not live. Then the free count per bike parking, and one history sample per bike parking per minute (counts only, never which space was used when). Apart from this order, on the clock: a bike parking without a result for ${stale} s shows stale.`,
       live: [
-        ["Minimum confidence for free", `${app.min_confidence}`],
-        ["Clean pictures before free", `${app.free_after_clean}`],
+        ["Asks the vision service", `every ${pollS} s`],
+        ["Last answer", vc ? ago(vc.alive_age_s) : "n/a"],
+        ["Last decided picture", vc ? ago(vc.picture_age_s) : "n/a"],
         ["Stale after", `${stale} s`],
-        ["Last decision", ago(r.ok_age_s)],
         ["Bike Parkings live", `${live.length} of ${status.racks.length}`],
       ],
-      labels: { window: `${app.free_after_clean}-picture rule` },
-      notes: { foot: `clock rule: a bike parking shows stale after ${stale} s without a result${staleRacks ? `, ${staleRacks} stale now` : ""}` },
+      notes: { mode: "port 8002", foot: `clock rule: a bike parking shows stale after ${stale} s without a result${staleRacks ? `, ${staleRacks} stale now` : ""}` },
       parts: {
-        discard: [pictures ? "good" : "muted", `${pictures} deleted, none kept`],
-        confidence: [decideState, `free under ${app.min_confidence} or unsure: bike`],
-        window: [decideState, `taken at once, free after ${app.free_after_clean} clean`],
+        read: [!vc ? "muted" : answering ? "good" : "critical", !vc ? "no vision camera" : answering ? `every ${pollS} s, last ${ago(vc.alive_age_s)}` : "no answer: all taken"],
+        fresh: [!vc ? "muted" : fresh ? "good" : "warning", vc?.picture_age_s != null ? `last ${ago(vc.picture_age_s)}` : "none yet"],
+        evidence: [!vc ? "muted" : tracking ? "good" : "warning", !vc ? "unknown counts as taken" : tracking ? `${v.unknown ?? 0} unknown, counted taken` : "every hook taken"],
         counts: [pagesState, `${live.length} of ${status.racks.length} bike parkings live`],
         history: [live.length ? "good" : "muted", "1 per bike parking per minute"],
       },
@@ -302,17 +267,18 @@ function flowNodes(status) {
       label: `${live.length} of ${status.racks.length} live`,
       sub: "user 5 s, admin 3 s",
       title: "Pages",
-      text: "Two loops that run on their own. The user page asks for the bike parkings every 5 seconds, and for the history of the selected bike parking every 30 seconds. This admin page asks for the status every 3 seconds.",
+      text: "Two loops that run on their own. The user page asks for the bike parkings every second, and for the history of the selected bike parking every 30 seconds. This admin page asks for the status every second. A bike parking without a live picture is drawn grey and counts as full. Visitors reach the pages through a public cloudflared tunnel link.",
       live: [
         ["Free spaces now", `${totalFree} (live bike parkings only)`],
         ["Bike Parkings live", `${live.length} of ${status.racks.length}`],
         ["Server version", `v${esc(app.version)}`],
       ],
+      notes: { foot: "public link: cloudflared tunnel" },
       parts: {
-        racks: [live.length ? "good" : "muted", `every 5 s, ${totalFree} free now`],
+        racks: [live.length ? "good" : "muted", `every 1 s, ${totalFree} free now`],
         history: [live.length ? "good" : "muted", "every 30 s"],
         user: [pagesState, `${status.racks.length} bike parkings, ${status.racks.filter((k) => k.location).length} on the map`],
-        status: ["good", `every 3 s, v${app.version}`],
+        status: ["good", `every 1 s, v${app.version}`],
         admin: ["good", `${cams.length} cameras, ${status.racks.length} bike parkings`],
       },
     },
@@ -333,8 +299,8 @@ function buildInside(g, layout) {
     const first = x0 + (l ? 30 : 12); // the second lane leaves room for its tag
     const last = x1 - 12;
     const xs = lane.parts.map((_, i) => first + (i * (last - first)) / (n - 1));
-    const from = l === 0 || lane.joins === "left" ? x0 : first - 4;
-    const to = l === 0 || lane.joins === "right" ? x1 : last + 4;
+    const from = l === 0 || lane.joins === "left" || lane.joins === "both" ? x0 : first - 4;
+    const to = l === 0 || lane.joins === "right" || lane.joins === "both" ? x1 : last + 4;
     const mids = xs.slice(1).map((x, i) => `${(x + xs[i]) / 2},${y}`).join(" ");
     const back = l ? -3.5 : 3.5; // a loop returns on the side where this lane has no labels
     const sweep = l ? 0 : 1;
@@ -368,14 +334,6 @@ function buildInside(g, layout) {
     <text class="note" data-note="status" x="${x1 - 6}" y="119.8" text-anchor="end"></text>`;
 }
 
-/* The detector's parts depend on its mode, so its inside is built again when the mode changes */
-function ensureInside(g, detectorMode) {
-  const key = g.dataset.node === "detector" ? detectorMode : "fixed";
-  if (g.dataset.layout === key) return;
-  g.dataset.layout = key;
-  buildInside(g, g.dataset.node === "detector" ? FLOW_PARTS.detector[detectorMode] : FLOW_PARTS[g.dataset.node]);
-}
-
 function setLines(text, lines, ys) {
   const x = text.getAttribute("x");
   text.innerHTML = lines.map((line, i) => (line ? `<tspan x="${x}" y="${ys[i]}">${esc(line)}</tspan>` : "")).join("");
@@ -385,7 +343,6 @@ function renderFlow(status) {
   const nodes = flowNodes(status);
   document.querySelectorAll("#flow .node").forEach((g) => {
     const info = nodes[g.dataset.node];
-    ensureInside(g, status.detector.mode);
     g.dataset.state = info.state;
     g.querySelector(".node-status").textContent = info.label;
     g.querySelector(".node-sub").textContent = info.sub;
@@ -681,7 +638,7 @@ window.addEventListener("resize", () => {
 });
 
 document.querySelectorAll("#flow .node").forEach((g) => {
-  ensureInside(g, "fake");
+  buildInside(g, FLOW_PARTS[g.dataset.node]);
   const select = () => {
     if (dragged) return;
     selectedNode = g.dataset.node;
@@ -1034,6 +991,62 @@ document.addEventListener("keydown", (event) => {
   event.stopImmediatePropagation(); // this Escape only closes the tip, the next one zooms the diagram out
 }, true);
 
+// Tabs: Camera (default) and Statistics; #statistics in the address opens the second.
+const TABS = ["camera", "statistics"];
+
+function showTab(name) {
+  for (const t of TABS) {
+    el(`view-${t}`).hidden = t !== name;
+    el(`tab-${t}`).setAttribute("aria-selected", String(t === name));
+    el(`tab-${t}`).tabIndex = t === name ? 0 : -1;
+  }
+  if (location.hash !== `#${name}`) history.replaceState(null, "", `#${name}`);
+  refreshStages();
+}
+
+document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+window.addEventListener("hashchange", () => showTab(location.hash === "#statistics" ? "statistics" : "camera"));
+
+// Camera tab: the vision service's three live pictures, fetched through the app (one request per picture at a time).
+function stageCounts(c) {
+  return `${chip("good", "dot", `${c.free} free`)} ${chip("critical", "square", `${c.occupied} occupied`)} ${chip("muted", "ring", `${c.unknown} unknown`)}`;
+}
+
+function renderStageChips(info) {
+  const ms = (v) => (v == null ? "" : ` ${chip("muted", "ring", `${Math.round(v)} ms`)}`);
+  const freed = info.bikes.freed?.length ? ` ${chip("muted", "ring", `overlap freed: ${info.bikes.freed.join(", ")}`)}` : "";
+  const field = (stage, html) => { document.querySelector(`.stage[data-stage="${stage}"] [data-f="chips"]`).innerHTML = html; };
+  field("camera", info.aligned === false ? chip("critical", "square", "Not lined up with the rack") : chip("good", "dot", "Lined up with the rack"));
+  field("hooks", stageCounts(info.hooks) + ms(info.hooks.ms));
+  field("bikes", `${stageCounts(info.bikes)} ${chip("muted", "ring", `${info.bikes.vehicles} bike(s) found`)}${freed}${ms(info.bikes.ms)}`);
+}
+
+async function refreshStages() {
+  if (el("view-camera").hidden || !lastStatus) return;
+  const cam = (lastStatus.cameras ?? []).find((c) => c.vision?.preview);
+  el("stages-note").hidden = Boolean(cam);
+  if (!cam) return;
+  const base = `/api/vision/${encodeURIComponent(cam.rack)}`;
+  for (const card of document.querySelectorAll(".stage")) {
+    const img = card.querySelector("img");
+    if (img.dataset.busy) continue;
+    img.dataset.busy = "1";
+    fetch(`${base}/stage/${card.dataset.stage}.jpg`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((blob) => {
+        const old = img.src;
+        img.src = URL.createObjectURL(blob);
+        if (old.startsWith("blob:")) URL.revokeObjectURL(old);
+      })
+      .catch(() => {}) // keep the last picture
+      .finally(() => delete img.dataset.busy);
+  }
+  try {
+    const r = await fetch(`${base}/stages`, { cache: "no-store" });
+    if (r.ok) renderStageChips(await r.json());
+  } catch { /* keep the last counts */ }
+}
+
 function render(status) {
   lastStatus = status;
   const rose = notePoll(status);
@@ -1042,7 +1055,8 @@ function render(status) {
   renderActivity(status);
   renderDetector(status);
   renderCameras(status, rose);
-  el("updated").textContent = `Refreshed ${new Date().toLocaleTimeString()}. Updates every 3 seconds.`;
+  refreshStages();
+  el("updated").textContent = `Refreshed ${new Date().toLocaleTimeString()}. Updates every second.`;
 }
 
 async function refresh() {
@@ -1055,5 +1069,6 @@ async function refresh() {
   }
 }
 
+showTab(location.hash === "#statistics" ? "statistics" : "camera");
 refresh();
-setInterval(refresh, 3000);
+setInterval(refresh, 1000);

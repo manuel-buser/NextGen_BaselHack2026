@@ -159,7 +159,7 @@ def test_demo_rack_looks_like_any_rack_and_shows_made_up_spaces(server, page):
 
 
 def test_admin_page_lists_components(server, page):
-    page.goto(server + "/admin")
+    page.goto(server + "/admin#statistics")
     page.wait_for_selector("#detector:has-text('fake')")
     assert "Online" in page.locator("#cameras").inner_text()
     assert "Real camera" in page.locator("#cameras").inner_text()  # rack C is demo
@@ -170,12 +170,12 @@ def test_admin_page_lists_components(server, page):
 
 def test_admin_flow_diagram_is_live_and_clickable(server, page):
     picture(server, "A", taken_a(5))
-    page.goto(server + "/admin")
+    page.goto(server + "/admin#statistics")
     page.wait_for_selector("#flow .node[data-node='camera'][data-state]")
     camera = page.locator("#flow .node[data-node='camera']")
     assert camera.get_attribute("data-state") == "warning"  # racks A and C online, rack B never seen
     assert camera.locator(".node-status").text_content() == "2 of 3 online"
-    assert page.locator("#flow .node[data-node='detector'] .node-status").text_content() == "stand-in"
+    assert page.locator("#flow .node[data-node='vision'] .node-status").text_content() == "no camera yet"  # no rack reads the vision service here
     page.locator("#flow .node[data-node='decide']").click()
     page.wait_for_selector("#flow-detail:has-text('applies the rules')")
     picture(server, "A", taken_a(5))
@@ -183,7 +183,7 @@ def test_admin_flow_diagram_is_live_and_clickable(server, page):
 
 
 def test_admin_flow_zooms_into_the_camera_step(server, page):
-    page.goto(server + "/admin")
+    page.goto(server + "/admin#statistics")
     page.wait_for_selector("#flow .node[data-node='camera'] .part[data-part='capture'][data-state]", state="attached")  # hidden until zoomed
     assert page.locator("#flow").get_attribute("data-level") == "overview"
     camera = page.locator("#flow .node[data-node='camera']")
@@ -420,7 +420,7 @@ STEP_IN_VIEW = """(step) => {
 
 
 def test_admin_flow_pane_grows_and_moves_between_steps(server, page):
-    page.goto(server + "/admin")
+    page.goto(server + "/admin#statistics")
     page.wait_for_selector("#flow .node[data-node='camera'][data-state]")
     strip = page.evaluate(FLOW_HEIGHT)
     assert strip < 200 and not page.locator("#flow-next").is_visible()
@@ -429,21 +429,21 @@ def test_admin_flow_pane_grows_and_moves_between_steps(server, page):
     page.wait_for_function(f"{FLOW_HEIGHT} > 300")
     page.wait_for_function(STEP_IN_VIEW, arg="camera")  # the whole box, not a slice
     page.click("#flow-next")
-    page.wait_for_selector("#flow-steps [data-step='receive'][aria-current='step']")
-    page.wait_for_function(STEP_IN_VIEW, arg="receive")
-    assert page.locator("#flow .node[data-node='receive'] .part-label").first.is_visible()
+    page.wait_for_selector("#flow-steps [data-step='relay'][aria-current='step']")
+    page.wait_for_function(STEP_IN_VIEW, arg="relay")
+    assert page.locator("#flow .node[data-node='relay'] .part-label").first.is_visible()
     page.click("#flow-steps [data-step='camera']")
     page.wait_for_selector("#flow-steps [data-step='camera'][aria-current='step']")
     page.keyboard.press("ArrowRight")  # the focused chip is inside the diagram
-    page.wait_for_selector("#flow-steps [data-step='receive'][aria-current='step']")
-    page.wait_for_function(STEP_IN_VIEW, arg="receive")
+    page.wait_for_selector("#flow-steps [data-step='relay'][aria-current='step']")
+    page.wait_for_function(STEP_IN_VIEW, arg="relay")
     page.click("#flow-zoom-reset")
     page.wait_for_function(f"Math.abs({FLOW_HEIGHT} - {strip}) < 2")
     assert page.locator("#flow").get_attribute("data-level") == "overview"
 
 
 def test_admin_flow_dot_finishes_its_run_before_the_next(server, page):
-    page.goto(server + "/admin")
+    page.goto(server + "/admin#statistics")
     page.wait_for_selector("#flow .node[data-node='camera'][data-state]")
     picture(server, "A", taken_a(5))
     page.wait_for_selector("#packet.moving", timeout=8000)
@@ -458,7 +458,7 @@ def test_admin_flow_dot_finishes_its_run_before_the_next(server, page):
 
 
 def test_admin_flow_dot_stays_under_the_boxes_in_the_overview(server, page):
-    page.goto(server + "/admin")
+    page.goto(server + "/admin#statistics")
     page.wait_for_selector("#flow .node[data-node='camera'][data-state]")
     page.locator("#flow .node[data-node='camera']").scroll_into_view_if_needed()
     picture(server, "A", taken_a(5))
@@ -483,7 +483,7 @@ def test_admin_camera_cards_fit_a_laptop_screen(server, page):
         httpx.post(f"{server}/api/camera/A/alive", json={**node, "uptime_s": uptime_s}, headers={"X-Node-Id": "esp32-a"})
     page.set_viewport_size({"width": 1280, "height": 800})
     try:
-        page.goto(server + "/admin")
+        page.goto(server + "/admin#statistics")
         page.wait_for_selector("#cameras:has-text('restarted')")
         card = page.locator("#cameras .card[data-key='A']")
         assert card.locator(".chip-real").inner_text() == "Real camera"  # rack C is demo
@@ -495,18 +495,18 @@ def test_admin_camera_cards_fit_a_laptop_screen(server, page):
 def test_admin_step_can_be_selected_while_zoomed_in(server, page):
     desk = page.context.browser.new_page(viewport={"width": 1280, "height": 900})
     try:
-        desk.goto(server + "/admin")
+        desk.goto(server + "/admin#statistics")
         desk.wait_for_selector("#flow .node[data-node='camera'][data-state]")
-        receive = desk.locator("#flow .node[data-node='receive'] .node-box")
-        box = receive.bounding_box()
+        relay = desk.locator("#flow .node[data-node='relay'] .node-box")
+        box = relay.bounding_box()
         desk.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
         desk.mouse.wheel(0, -300)
         desk.mouse.wheel(0, -300)
         desk.wait_for_selector("#flow[data-level='detail']")
         desk.wait_for_timeout(1500)  # the zoom eases in and snaps onto the step
-        box = receive.bounding_box()
+        box = relay.bounding_box()
         desk.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] * 0.85)
-        desk.wait_for_selector("#flow-detail:has-text('App receives the picture')", timeout=3000)
+        desk.wait_for_selector("#flow-detail:has-text('Relay (public server)')", timeout=3000)
     finally:
         close(desk)
 
@@ -514,7 +514,7 @@ def test_admin_step_can_be_selected_while_zoomed_in(server, page):
 def test_admin_camera_card_shows_signal_bars_and_a_temperature_gauge(server, page):
     node = {"tempC": 41.2, "tooHot": False, "wifi_rssi_dbm": -79, "wifi_connected": True, "heap_largest_block": 81920, "uptime_s": 5000}
     httpx.post(f"{server}/api/camera/A/alive", json=node, headers={"X-Node-Id": "esp32-a"})
-    page.goto(server + "/admin")
+    page.goto(server + "/admin#statistics")
     card = page.locator("#cameras .card[data-key='A']")
     card.locator(".bars[data-level='weak']").wait_for()
     assert card.locator(".bars .bar.on").count() == 1  # -79 dBm: one bar of four
@@ -526,7 +526,7 @@ def test_admin_camera_card_shows_signal_bars_and_a_temperature_gauge(server, pag
 
 def test_admin_camera_card_carries_the_rack_detection(server, page):
     picture(server, "A", taken_a(4), times=3)
-    page.goto(server + "/admin")
+    page.goto(server + "/admin#statistics")
     card = page.locator("#cameras .card[data-key='A']")
     card.locator("[data-f='detect']:has-text('spaces ready')").wait_for()
     assert card.locator(".chip-good:has-text('Live')").count() == 1  # the rack's status chip
@@ -534,7 +534,7 @@ def test_admin_camera_card_carries_the_rack_detection(server, page):
 
 
 def test_admin_activity_strip_ticks_for_a_new_picture(server, page):
-    page.goto(server + "/admin")
+    page.goto(server + "/admin#statistics")
     page.wait_for_selector("#activity .act-row[data-row='A']")
     ticks = "#activity .act-row[data-row='A'] .mark-picture"
     before = page.locator(ticks).count()
@@ -543,10 +543,10 @@ def test_admin_activity_strip_ticks_for_a_new_picture(server, page):
     assert page.locator(ticks).last.get_attribute("title").startswith("Picture from A")
 
 
-def test_admin_flow_detail_shows_lanes_and_the_stand_in(server, page):
+def test_admin_flow_detail_shows_lanes_and_the_image_processing_step(server, page):
     picture(server, "A", taken_a(5))
-    page.goto(server + "/admin")
-    page.wait_for_selector("#flow .node[data-node='detector'] .part[data-part='standin'][data-state]", state="attached")
+    page.goto(server + "/admin#statistics")
+    page.wait_for_selector("#flow .node[data-node='vision'] .part[data-part='process'][data-state]", state="attached")
     page.dblclick("#flow .node[data-node='camera'] .node-box")
     page.wait_for_selector("#flow[data-level='detail'] #flow-steps [data-step='camera'][aria-current='step']")
     camera = page.locator("#flow .node[data-node='camera']")
@@ -554,44 +554,80 @@ def test_admin_flow_detail_shows_lanes_and_the_stand_in(server, page):
     assert camera.locator(".lane-tag").all_text_contents() == ["picture", "health"]
     assert camera.locator(".lane-tag").last.is_visible()
     assert camera.locator(".part.minor[data-part='alive']").count() == 1 and camera.locator(".part.minor[data-part='capture']").count() == 0
-    detector = page.locator("#flow .node[data-node='detector'] .inside")
-    assert "built-in stand-in, no recognition" in detector.text_content()  # detector mode fake: nothing is recognised
-    assert detector.locator(".part[data-part='bikes']").count() == 0
+    vision = page.locator("#flow .node[data-node='vision'] .inside")
+    labels = vision.locator(".part-label").all_text_contents()
+    assert labels.index("line up with the rack") < labels.index("image processing") < labels.index("free or taken per hook")
+    assert vision.locator(".part[data-part='bikes'], .part[data-part='standin']").count() == 0  # the old detector parts are gone
     page.click("#flow-zoom-reset")
     page.wait_for_selector("#flow[data-level='overview']")
 
 
-def test_admin_flow_decide_step_deletes_the_picture_before_the_rules(server, page):
-    page.goto(server + "/admin")
+def test_admin_flow_decide_step_counts_missing_evidence_as_taken(server, page):
+    page.goto(server + "/admin#statistics")
     page.wait_for_selector("#flow .node[data-node='decide'] .part[data-state]", state="attached")
     decide = page.locator("#flow .node[data-node='decide']")
     order = decide.locator(".part").evaluate_all("(parts) => parts.map((p) => p.dataset.part)")
-    assert order == ["discard", "confidence", "window", "counts", "history"]
-    labels = decide.locator(".part-label").all_text_contents()
-    assert labels.index("confidence rule") < labels.index("3-picture rule")
+    assert order == ["read", "fresh", "evidence", "counts", "history"]
+    assert "no evidence: taken" in decide.locator(".part-label").all_text_contents()
     assert decide.locator(".note[data-note='foot']").text_content().startswith("clock rule: a bike parking shows stale after")
     decide.click()
     page.wait_for_selector("#flow-detail:has-text('applies the rules')")
     page.click("#flow-detail summary")  # "What happens" is collapsed
     text = page.locator("#flow-detail .flow-how").inner_text()
-    assert text.index("deleted") < text.index("confidence rule") < text.index("3-picture rule")
+    assert "no picture reaches the app" in text and text.index("Never free without evidence") < text.index("history sample")
+
+
+def test_admin_flow_follows_the_camera_through_the_relay(server, page):
+    """Rack A shown as the vision service reports it: camera silent at the relay, so every hook counts as taken."""
+    source = {"kind": "relay", "online": False, "camera_id": "cam01", "last_seen_s": 300.0, "snapshot_age_s": 300.0, "state": "stale",
+              "temperature_c": 58.3, "wifi_rssi_dbm": -48, "pushes_ok": 774, "pushes_failed": 0, "last_people": 1, "last_plates": 0}
+    vision = {"camera": "live01", "url": "http://127.0.0.1:8000", "how": "pull", "poll_s": 3.0, "online": False, "frame_age_s": 300.0,
+              "slot_count": 19, "free": 0, "occupied": 0, "unknown": 19, "source": source}
+
+    def status(route):
+        response = fetch_or_abort(route)
+        if response is None:
+            return
+        data = response.json()
+        next(c for c in data["cameras"] if c["rack"] == "A").update(vision=vision, alive_age_s=1.0, picture_age_s=300.0)
+        next(k for k in data["racks"] if k["id"] == "A")["tracking"] = False
+        route.fulfill(response=response, json=data)
+
+    desk = page.context.browser.new_page(viewport={"width": 1280, "height": 900})
+    try:
+        desk.route("**/api/admin/status", status)
+        desk.goto(server + "/admin#statistics")
+        desk.wait_for_selector("#flow .node[data-node='relay'][data-state='critical']")
+        node = lambda step: desk.locator(f"#flow .node[data-node='{step}']")
+        assert node("relay").locator(".node-status").text_content() == "camera silent"
+        assert node("vision").get_attribute("data-state") == "warning" and node("vision").locator(".node-status").text_content() == "no new picture"
+        assert node("decide").locator(".node-status").text_content() == "all taken"
+        assert node("vision").locator(".part[data-part='pull'] .part-value").text_content() == "too old, not used"
+        assert node("vision").locator(".part[data-part='hooks'] .part-value").text_content() == "0 free, 0 taken, 19 unknown"
+        assert node("decide").locator(".part[data-part='evidence'] .part-value").text_content() == "every hook taken"
+        assert node("camera").locator(".part[data-part='send'] .part-value").text_content() == "774 ok, 0 failed"
+        node("vision").click()
+        desk.wait_for_selector("#flow-detail:has-text('Vision service (team laptop)')")
+        assert "Image processing" in desk.locator("#flow-detail .flow-how p").text_content()
+    finally:
+        close(desk)
 
 
 def test_admin_flow_step_view_is_fully_detail_on_a_wide_short_window(server, page):
     wide = page.context.browser.new_page(viewport={"width": 1865, "height": 675})
     try:
-        wide.goto(server + "/admin")
+        wide.goto(server + "/admin#statistics")
         wide.wait_for_selector("#flow .node[data-node='camera'][data-state]")
         wide.add_style_tag(content=".page.wide { max-width: none; } .flow-wrap { width: 1899px; }")  # a pane about 1865 px wide, as on a wide laptop window
         assert 1.8 < wide.evaluate("fitScale()") < 2.2  # this pane shape fits a step inside the old fixed cross-fade band
         wide.dblclick("#flow .node[data-node='camera'] .node-box")
         wide.wait_for_selector("#flow[data-level='detail'] #flow-steps [data-step='camera'][aria-current='step']")
         wide.click("#flow-next")
-        wide.wait_for_selector("#flow-steps [data-step='receive'][aria-current='step']")
+        wide.wait_for_selector("#flow-steps [data-step='relay'][aria-current='step']")
         wide.wait_for_timeout(1200)  # the pan settles
         assert wide.locator("#flow").get_attribute("data-level") == "detail"
         assert not any(text.is_visible() for text in wide.locator("#flow .overview text").all())
-        assert wide.locator("#flow .node[data-node='receive'] .part-label").first.is_visible()
+        assert wide.locator("#flow .node[data-node='relay'] .part-label").first.is_visible()
     finally:
         wide.close()
 
@@ -599,7 +635,7 @@ def test_admin_flow_step_view_is_fully_detail_on_a_wide_short_window(server, pag
 def test_admin_wheel_stop_inside_the_fade_never_rests_half_faded(server, page):
     desk = page.context.browser.new_page(viewport={"width": 1280, "height": 900})
     try:
-        desk.goto(server + "/admin")
+        desk.goto(server + "/admin#statistics")
         desk.wait_for_selector("#flow .node[data-node='camera'][data-state]")
         # each case stops the wheel inside the fade band (1.8 to 2.2 here): at about 1.93 and about 2.09
         for pre_zoom, delta, settled in ((False, -300, "overview"), (True, -150, "detail")):
@@ -608,7 +644,7 @@ def test_admin_wheel_stop_inside_the_fade_never_rests_half_faded(server, page):
             if pre_zoom:
                 desk.click("#flow-zoom-in")  # to 1.5, below the band
                 desk.wait_for_timeout(600)
-            box = desk.locator("#flow .node[data-node='receive'] .node-box").bounding_box()
+            box = desk.locator("#flow .node[data-node='relay'] .node-box").bounding_box()
             desk.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
             desk.mouse.wheel(0, delta)
             desk.wait_for_selector(f"#flow[data-level='{settled}']", timeout=4000)
@@ -820,7 +856,7 @@ def test_theme_toggle_follows_the_device_until_clicked_and_remembers_the_choice(
         assert toggle.get_attribute("aria-label") == "Switch to light mode" and toggle.locator(".sun").is_visible()
         view.reload()
         assert view.evaluate(THEME) == "dark"
-        view.goto(server + "/admin")  # one choice for both pages
+        view.goto(server + "/admin#statistics")  # one choice for both pages
         toggle = view.locator("header.masthead #theme-toggle")
         assert view.evaluate(THEME) == "dark" and toggle.get_attribute("aria-label") == "Switch to light mode"
         box = toggle.bounding_box()
@@ -849,7 +885,7 @@ def test_stored_theme_is_set_before_the_body_is_parsed(server, page):
         route.fulfill(response=response, body=body)
 
     try:
-        view.goto(server + "/admin")
+        view.goto(server + "/admin#statistics")
         view.evaluate("localStorage.setItem('bikeslot-theme', 'dark')")
         for path in ("/", "/admin"):
             view.route(server + path, probe)
@@ -897,7 +933,7 @@ def test_map_keeps_its_colours_in_both_themes(server, page):
 
 
 def test_admin_shows_the_cameras_first_and_the_diagram_below(server, page):
-    page.goto(server + "/admin")
+    page.goto(server + "/admin#statistics")
     page.wait_for_selector("#cameras .card")
     order = page.evaluate("[...document.querySelectorAll('#cameras, #flow, #kpis, #activity, #detector')].map((node) => node.id)")
     assert order == ["cameras", "flow", "kpis", "activity", "detector"]
@@ -907,7 +943,7 @@ def test_admin_shows_the_cameras_first_and_the_diagram_below(server, page):
 def test_admin_info_button_opens_on_hover_focus_and_tap_and_closes(server, page):
     desk = page.context.browser.new_page(viewport={"width": 1280, "height": 900})
     try:
-        desk.goto(server + "/admin")
+        desk.goto(server + "/admin#statistics")
         desk.wait_for_selector("#flow .node[data-node='camera'][data-state]")
         button = desk.locator("[aria-controls='flow-help']")
         tip = desk.locator("#flow-help")
@@ -937,7 +973,7 @@ def test_admin_info_button_opens_on_hover_focus_and_tap_and_closes(server, page)
         close(desk)
     phone = page.context.browser.new_page(viewport={"width": 390, "height": 844}, has_touch=True)
     try:
-        phone.goto(server + "/admin")
+        phone.goto(server + "/admin#statistics")
         phone.wait_for_selector("#cameras .card")
         button = phone.locator("[aria-controls='cameras-help']")
         tip = phone.locator("#cameras-help")
@@ -958,14 +994,14 @@ def test_admin_info_button_opens_on_hover_focus_and_tap_and_closes(server, page)
 
 
 def test_admin_what_happens_is_collapsed_and_the_live_numbers_show(server, page):
-    page.goto(server + "/admin")
+    page.goto(server + "/admin#statistics")
     page.wait_for_selector("#flow-detail .flow-title:has-text('Camera node')")
     how = page.locator("#flow-detail details.flow-how")
     assert how.get_attribute("open") is None and not how.locator("p").is_visible()
     rows = page.locator("#flow-detail dl")  # the camera cards above already show every camera number
     assert rows.inner_html() == "" and not rows.is_visible()
     how.locator("summary").click()
-    assert "heat guard" in how.locator("p").inner_text()
+    assert "blurs people" in how.locator("p").inner_text()
     page.evaluate("refresh()")
     assert how.locator("p").is_visible()  # patched, not rebuilt: still open after a refresh
     page.locator("#flow .node[data-node='pages']").click()
@@ -977,7 +1013,7 @@ def test_admin_uptime_is_plain_text_without_a_restart_marker(server, page):
     node = {"tempC": 41.2, "tooHot": False, "wifi_rssi_dbm": -60, "wifi_connected": True, "heap_largest_block": 150000}
     for uptime_s in (4100, 12):  # the uptime dropped: the node restarted
         httpx.post(f"{server}/api/camera/A/alive", json={**node, "uptime_s": uptime_s}, headers={"X-Node-Id": "esp32-a"})
-    page.goto(server + "/admin")
+    page.goto(server + "/admin#statistics")
     uptime = page.locator("#cameras .card[data-key='A'] [data-f='uptime']")
     uptime.locator("b:has-text('restarted')").wait_for()
     text = uptime.inner_text()
@@ -987,10 +1023,10 @@ def test_admin_uptime_is_plain_text_without_a_restart_marker(server, page):
 
 def test_admin_page_has_no_demo_labels(server, page):
     picture(server, "C", b"DEMO:101100000000", times=3)  # rack C is demo
-    page.goto(server + "/admin")
+    page.goto(server + "/admin#statistics")
     page.wait_for_selector("#cameras .card[data-key='C'] .chip")
     words = "() => [document.body.textContent, ...[...document.querySelectorAll('[aria-label], [title]')].map((n) => `${n.getAttribute('aria-label')} ${n.getAttribute('title')}`)].join(' ').toLowerCase()"
-    for step in ("camera", "receive", "detector", "decide", "pages"):  # the detail shows one step at a time
+    for step in ("camera", "relay", "vision", "decide", "pages"):  # the detail shows one step at a time
         page.locator(f"#flow .node[data-node='{step}']").click()
         page.wait_for_selector(f"#flow .node[data-node='{step}'].selected")
         assert "demo" not in page.evaluate(words)
@@ -1236,3 +1272,13 @@ def test_without_a_position_there_is_no_arrival_line_and_no_prompt_on_load(serve
         assert not [url for url in sent if "minutes=" in url]
     finally:
         context.close()
+
+
+def test_admin_opens_on_the_camera_tab_and_switches_to_statistics(server, page):
+    page.goto(server + "/admin")
+    assert page.is_visible("#view-camera") and page.is_hidden("#view-statistics")
+    assert page.locator(".stage").count() == 3
+    page.click("#tab-statistics")
+    assert page.is_visible("#view-statistics") and page.is_hidden("#view-camera") and page.url.endswith("#statistics")
+    page.click("#tab-camera")
+    assert page.is_visible("#view-camera") and page.url.endswith("#camera")

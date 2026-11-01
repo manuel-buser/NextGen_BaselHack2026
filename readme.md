@@ -1,6 +1,6 @@
 # Find my Bike Slot
 
-**Team NextGen** – BaselHack 2026
+**Team NextGen**, BaselHack 2026
 **Challenge:** Find my Bike Slot (Endress+Hauser)
 **Tags:** #image recognition, #embedded
 
@@ -37,9 +37,9 @@ We explore a digital, physical, or combined solution that makes bicycle parking 
 
 ## Repository structure
 
-- `code/` – all code (firmware, image recognition, web/mobile interface)
-- `documentation/` – diagrams, architecture, code-related docs
-- `assets/` – videos, presentations, images
+- `code/`: all code (firmware, image recognition, web/mobile interface)
+- `documentation/`: diagrams, architecture, code-related docs
+- `assets/`: videos, presentations, images
 
 ## Solution
 
@@ -68,4 +68,4 @@ Persons and licence plates are blurred before anything is shown or uploaded; raw
 
 ## License
 
-MIT – see [license.txt](license.txt).
+MIT, see [license.txt](license.txt).

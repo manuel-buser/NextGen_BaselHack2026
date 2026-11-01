@@ -1,16 +1,12 @@
 """Find the hook row of a wall rack in a roughly frontal picture and write its slot layout (N equal slots).
 
-For phone pictures of the Memox wall rack (and a camera mounted head-on): the two pillars are the dark columns
-that reach from above the rail to the floor, the rail is the dark bar between them, the hooks hang below it at a
-constant pitch. This finds the pillars, the rail and the hook lattice, checks that N hooks fit between the pillars
-and writes ``<image>.layout.json`` plus ``<image>.overlay.jpg`` and ``.crops.jpg``, the same files
-slotcls_calibrate.py writes from clicked corners. For the angled ESP32 view use that script.
+Finds the two pillars, the rail between them and the hook lattice below it, and writes ``<image>.layout.json``,
+``.overlay.jpg`` and ``.crops.jpg`` like slotcls_calibrate.py (use that one for the angled ESP32 view).
 
     .venv/Scripts/python code/scripts/slotcls_hooks.py --images "assets/pictures/DemoPictures/memox_*.jpeg" --slots 19
 
-Prints one line per picture: pillars, rail rows, pitch, how many hook stems lie on the lattice, the slot span, and
-"uniform" when no lattice fitted and the span between the pillars was split evenly (check the overlay then).
-Overlay marks: magenta circles = the N hook positions used, orange = dark stems found under the rail.
+Prints per picture: pillars, rail rows, pitch, stems on the lattice, slot span, and "uniform" when no lattice fitted
+(check the overlay). Overlay: magenta = the N hook positions used, orange = dark stems found under the rail.
 """
 from __future__ import annotations
 
@@ -28,8 +24,7 @@ from bikeslot.slotcls.crops import contact_sheet, slot_crops  # noqa: E402
 from slotcls_calibrate import draw_overlay, layout_from_corners  # noqa: E402
 
 RAIL_GREY = 70      # the rail, the pillars and the skirting are almost black (grey 25-55); the wall is 180-220;
-                    # a brighter exposure lifts the rail to ~100, so rail_grey() scales this with the wall
-STEM_GREY = 120     # hook stems below the rail, a little lighter at their edges
+                    # a brighter exposure lifts the rail to ~100, so hook_row() retries with adaptive_grey()
 ROW_DEPTH = 3.3     # slot bottom = rail bottom + this many pitches (wall foot plus a little floor)
 
 
@@ -51,7 +46,7 @@ def runs(mask: np.ndarray, max_gap: int) -> list[tuple[int, int]]:
 GREY = RAIL_GREY    # threshold in use: the fixed one first, the adaptive one when that finds no lattice
 
 
-def rail_grey(gray: np.ndarray) -> int:
+def rail_grey() -> int:
     return GREY
 
 
@@ -67,7 +62,7 @@ def find_rail(gray: np.ndarray) -> tuple[int, int]:
     (the skirting and the floor below are dark too, but lower and thicker)."""
     h, w = gray.shape
     y0, y1 = int(0.25 * h), int(0.75 * h)
-    band = gray[y0:y1, int(0.3 * w):int(0.7 * w)] < rail_grey(gray)
+    band = gray[y0:y1, int(0.3 * w):int(0.7 * w)] < rail_grey()
     share = band.mean(axis=1)
     groups = [g for g in runs(share > 0.45, max_gap=2) if 4 <= g[1] - g[0] <= 30]
     if not groups:
@@ -81,14 +76,14 @@ def find_pillars(gray: np.ndarray, rail_top: int) -> list[tuple[int, int]]:
     is bridged). Graffiti strokes are thin and do not fill the band."""
     h, w = gray.shape
     y0, y1 = int(0.3 * h), max(int(0.3 * h) + 20, rail_top - 25)
-    share = (gray[y0:y1, :] < rail_grey(gray) + 30).mean(axis=0)
+    share = (gray[y0:y1, :] < rail_grey() + 30).mean(axis=0)
     return [r for r in runs(share > 0.4, max_gap=45) if r[1] - r[0] >= 20 or r[0] == 0 or r[1] == w - 1]
 
 
 def rail_extent(gray: np.ndarray, top: int, bottom: int) -> tuple[int, int]:
     """Leftmost and rightmost column of the rail: the longest dark run along its rows (a few px of tilt and
     gaps of a few px allowed). The pillars are as dark as the rail, so this can run into them."""
-    rows = gray[max(0, top - 8):bottom + 9] < rail_grey(gray)
+    rows = gray[max(0, top - 8):bottom + 9] < rail_grey()
     share = rows.mean(axis=0)
     spans = runs(share > 0.3, max_gap=12)
     left, right = max(spans, key=lambda s: s[1] - s[0])
@@ -122,7 +117,7 @@ def wall_span(gray: np.ndarray, rail_top: int, rail_bottom: int) -> tuple[int, i
 def rail_top_at(gray: np.ndarray, x0: int, x1: int, top: int, bottom: int) -> float:
     """The rail's top row within the columns x0..x1 (hand-held pictures are a little tilted)."""
     lo = max(0, top - 15)
-    window = gray[lo:bottom + 15, x0:x1] < rail_grey(gray)
+    window = gray[lo:bottom + 15, x0:x1] < rail_grey()
     share = window.mean(axis=1)
     groups = runs(share > 0.45, max_gap=2)
     return float(lo + groups[0][0]) if groups else float(top)
@@ -130,7 +125,7 @@ def rail_top_at(gray: np.ndarray, x0: int, x1: int, top: int, bottom: int) -> fl
 
 def hook_candidates(gray: np.ndarray, rail_bottom: int, left: int, right: int) -> list[float]:
     """x positions of narrow dark stems just below the rail: hooks, but also bike tubes (the lattice sorts them)."""
-    band = gray[rail_bottom + 6:rail_bottom + 40, :] < rail_grey(gray) + 50
+    band = gray[rail_bottom + 6:rail_bottom + 40, :] < rail_grey() + 50
     dark = np.convolve(band.mean(axis=0), np.ones(3) / 3, mode="same")
     out = []
     for start, end in runs(dark > 0.35, max_gap=1):

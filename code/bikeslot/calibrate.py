@@ -1,21 +1,7 @@
-"""Stage A: propose a slot layout for a camera from its buffered frames.
+"""Stage A: propose a slot layout for a camera from its buffered frames (Layout(status="proposed") for the admin).
 
-Evidence, from the most to the least reliable:
-  * rack stands (stands.py): one fixed anchor per slot -> the row AXIS and the back edge of the slots;
-  * parked bikes (ground-contact point and centroid of each mask) -> the depth of the slots (vector from
-    the stand to the rear wheel), the split into rows, the side(s) of the rack that are used, and extra
-    end slots whose stand is hidden behind the bike;
-  * painted dividers (lines.py): where the bay boundaries are relative to the stands, and a lattice of
-    their own when the stands are missing or irregular;
-  * the VLM (vlm.py): parking type, enumerated slot count, numbering direction, rough row corners, and
-    "bike k stands in slot j" (used only when consistent with the bike spacing).
-
-Per row the anchors are projected onto the row axis and a 1-D *projective* lattice (lattice.py) is fitted:
-equally spaced slots seen in perspective, so hidden stands, slot boundaries and "is that end bike in an
-extra slot?" are all answered in slot units instead of pixels.  Candidate lattices from stands, dividers
-and bikes compete on how much of the evidence they explain.  Slot polygons: lattice boundaries on the
-back line + a depth vector that scales with the local pitch; a stirrup row used from both sides gets a
-second set of polygons on the far side.  Result: Layout(status="proposed") for the admin to confirm.
+Anchors (stands, parked bikes, painted dividers, optional VLM hints) are projected onto each row axis and a 1-D
+projective lattice (lattice.py) is fitted, so hidden stands and extra end slots are decided in slot units, not pixels.
 """
 from __future__ import annotations
 
@@ -251,11 +237,8 @@ def _assign_anchors_to_rows(anchors: list[dict], rows: list[list[dict]]) -> list
 
 
 def _merge_far_side_rows(rows_b: list[list[dict]], rows_a: list[list[dict]]) -> tuple[list, list, int]:
-    """A few bikes without stands whose contact points lie just behind the stand line of another row (within
-    ~a bike height) are not a row of their own but the far side of that rack: merge them so that the row
-    model can build polygons on both sides of the stands.  A row as populated as the stand row stays a row
-    of its own: two racks facing each other across a narrow aisle look the same from the camera, and a full
-    row calibrates fine from its bikes alone."""
+    """Merge a few stand-less bikes just behind another row's stand line (within ~a bike height) into that row as
+    its far side. A row as full as the stand row stays its own (facing racks across an aisle look the same)."""
     rows_b, rows_a = [list(r) for r in rows_b], [list(r) for r in rows_a]
     merged = 0
     changed = True

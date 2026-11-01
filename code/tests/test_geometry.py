@@ -1,9 +1,8 @@
 import numpy as np
 
-from bikeslot import config
-from bikeslot.geometry import (denormalize, interpolate_row, normalize, pixel_polygon, point_in_polygon,
-                               polygon_iou, principal_axis_order, row_from_polygons, slot_masks)
-from bikeslot.schemas import Layout, Row
+from bikeslot.geometry import (denormalize, interpolate_row, normalize, point_in_polygon, polygon_iou,
+                               principal_axis_order, row_from_polygons, slot_masks)
+from bikeslot.schemas import Row
 from bikeslot.store import layout_from_golden
 
 

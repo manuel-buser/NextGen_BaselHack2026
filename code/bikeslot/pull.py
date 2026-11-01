@@ -1,21 +1,8 @@
-"""Pull mode: the service polls camera snapshot URLs itself (no separate replay process needed).
+"""Pull mode: one daemon thread per camera polls a snapshot URL (BIKESLOT_PULL_CAMERAS) and processes it like a POST.
 
-Configured with ``BIKESLOT_PULL_CAMERAS="cam_id=http://ip/snapshot,other=https://relay.example.org/snapshot"``.
-One daemon thread per camera fetches a JPEG every ``PULL_INTERVAL`` seconds and hands it to the same
-processing path as ``POST /cameras/{id}/frames``.
-
-The URL is the camera's own ``/snapshot`` on the LAN, or the relay's (``relay/README.md``) when the camera pushes
-its pictures over a phone hotspot.  The relay answers with ``ETag`` and ``X-Snapshot-Age-S``, ``304`` when we send
-``If-None-Match`` and nothing newer has arrived, ``404`` while the camera has not sent anything yet and ``401``
-for a wrong view key.  The puller
-
-* sends the view key as ``X-View-Key`` (``BIKESLOT_PULL_VIEW_KEY``; ``?key=`` in the URL works too and is masked
-  in logs and in ``GET /health``),
-* asks with ``If-None-Match`` so an unchanged picture is neither downloaded nor processed again,
-* skips a picture older than ``PULL_MAX_AGE_S`` (the camera stopped sending, the relay still holds the last one),
-* reads the source's ``/health`` next to ``/snapshot`` (relay: ``online``, ``last_seen_s`` and the camera's own
-  health JSON; the ESP32 directly: its health JSON) and hands what it learned to ``note(camera_id, source)``, so
-  the camera's status (``CameraStatus.source``, ``online``) says when the picture stopped coming.
+The source is the camera's own ``/snapshot`` or the relay's (relay/README.md). The view key goes as ``X-View-Key``
+(a ``?key=`` is masked in logs and /health), ``If-None-Match`` skips unchanged pictures, pictures older than
+``PULL_MAX_AGE_S`` are skipped, and the source's ``/health`` feeds ``CameraStatus.source`` / ``online``.
 """
 from __future__ import annotations
 

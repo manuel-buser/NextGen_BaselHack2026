@@ -1,10 +1,10 @@
 """Compare vehicle detectors on the labelled test pictures of live01: how many vehicles stand in the rack area
 (wheels = bottom of the box inside the area) against the true count, and the time per picture.
 
-    .venv/Scripts/python code/scripts/vehicle_bench.py --detectors yolo dino [--tonight <folder with live01_*.jpeg>]
+    .venv/Scripts/python code/scripts/vehicle_bench.py --detectors yolo dino [--tonight <folder>]
 
-Pictures: the held-out test split of assets/pictures/hopefullyUsableDataset/aligned (one bike each) and, with
---tonight, the six camera frames of 2026-11-01 night (mirrored by the camera: flipped, then aligned).
+Pictures: the held-out test split of assets/pictures/hopefullyUsableDataset/aligned (one bike each) and the six
+camera frames of 2026-11-01 night in assets/pictures/nightTestFrames (mirrored by the camera: flipped, then aligned).
 Rack area: vehicles.rack_area (the slot row widened by one hook at each end, down to 2.2 x its depth).
 """
 import argparse
@@ -22,7 +22,8 @@ from bikeslot.schemas import Layout  # noqa: E402
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("--detectors", nargs="+", default=["yolo", "dino"])
-ap.add_argument("--tonight", help="folder with live01_v2.jpeg, live01_v6.jpeg, ... (optional)")
+ap.add_argument("--tonight", default=str(config.ROOT / "assets" / "pictures" / "nightTestFrames"),
+                help="folder with the night frames live01_v2.jpeg, live01_v6.jpeg, ... (skipped when missing)")
 args = ap.parse_args()
 
 pics = config.ROOT / "assets" / "pictures"
@@ -30,7 +31,7 @@ d = pics / "hopefullyUsableDataset" / "aligned"
 layout = Layout.model_validate_json((d / "live01.layout.json").read_text(encoding="utf-8"))
 items = [(f"test {f['file'][16:22]}", cv2.imread(str(d / f["file"])), 1)
          for f in json.load(open(d / "test.labels.json"))["frames"]]
-if args.tonight:
+if args.tonight and Path(args.tonight).exists():
     ref = registration.make_reference(cv2.imread(str(pics / "reference" / "live01_reference.jpg")))
     for name, n in (("live01_v2", 1), ("a", 1), ("live01_rack", 1), ("live01_v4_now", 1), ("live01_v3", 1), ("live01_v6", 2)):
         img = cv2.flip(cv2.imread(str(Path(args.tonight) / f"{name}.jpeg")), 1)
