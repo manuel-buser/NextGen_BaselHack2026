@@ -151,8 +151,9 @@ def test_demo_rack_looks_like_any_rack_and_shows_made_up_spaces(server, page):
     assert page.locator(".tile[data-rack='A'] .tile__title .chip--real").inner_text() == "Real camera"
     assert "demo" not in page.locator("body").inner_text().lower()  # no chip, map key entry or footer note
     assert page.locator(".chip--demo, .pin--demo, #note").count() == 0
-    tile.locator(".tile__head").click()
-    page.wait_for_selector(".tile[data-rack='C'].is-open .plan-wrap--free .cell")  # no layout: the spaces simply wrap
+    if "is-open" not in tile.get_attribute("class"):  # the only live rack opens by itself; a click would close it
+        tile.locator(".tile__head").click()
+    page.wait_for_selector(".tile[data-rack='C'].is-open .plan-wrap .cell")  # no layout: the spaces simply wrap
     assert page.locator(".tile.is-open").count() == 1
     assert tile.locator(".plan-free").inner_text() == "Free spaces: 2, 5 to 12"
 
@@ -222,7 +223,7 @@ def test_rack_plan_in_the_panel_and_at_real_size_on_the_map(server, page):
     assert plan.locator(".cell").count() == 15
     assert (plan.locator(".cell--taken").count(), plan.locator(".cell--free").count()) == (5, 10)
     assert plan.locator(".cell > span").first.text_content() == "1" and plan.locator(".cell > span").count() == 15
-    assert body.locator(".plan__entry").count() == 1 and "Entrance" in body.locator(".plan-key").inner_text()
+    assert body.locator(".plan__entry").count() == 0 and body.locator(".plan-key").inner_text().split() == ["Free", "Taken"]  # no entrance
     page.wait_for_selector(".leaflet-marker-icon .pin, .map-note", timeout=20000)
     if page.locator(".map-note").count() and not page.locator(".leaflet-marker-icon").count():
         pytest.skip("map library did not load (no internet)")
@@ -235,11 +236,11 @@ def test_rack_plan_in_the_panel_and_at_real_size_on_the_map(server, page):
     page.evaluate("map.setView([47.5463, 7.5950], 19, {animate: false})")
     page.wait_for_selector(".leaflet-overlay-pane path.plan-space-taken")
     assert (spaces.count(), page.locator("path.plan-space-free").count(), page.locator("path.plan-space-taken").count()) == (15, 10, 5)
-    assert page.locator("path.plan-entrance").count() == 1 and page.locator("path.plan-outline").count() == 0
+    assert page.locator("path.plan-entrance").count() == 0 and page.locator("path.plan-outline").count() == 0
     assert page.locator(".leaflet-overlay-pane #plan-hatch").count() == 1  # taken reads without colour too
     assert page.locator(".leaflet-marker-icon .mcard .plan .cell--free").count() == 10  # the upright card stays
     card_bottom = page.evaluate("document.querySelector('.leaflet-marker-icon .mcard').getBoundingClientRect().bottom")
-    plan_top = page.evaluate("Math.min(...[...document.querySelectorAll('path.plan-space, path.plan-entrance')].map((p) => p.getBoundingClientRect().top))")
+    plan_top = page.evaluate("Math.min(...[...document.querySelectorAll('path.plan-space')].map((p) => p.getBoundingClientRect().top))")
     assert card_bottom + 8 <= plan_top  # the card and its pointer sit above the plan
 
 
@@ -568,7 +569,7 @@ def test_admin_flow_decide_step_deletes_the_picture_before_the_rules(server, pag
     assert order == ["discard", "confidence", "window", "counts", "history"]
     labels = decide.locator(".part-label").all_text_contents()
     assert labels.index("confidence rule") < labels.index("3-picture rule")
-    assert decide.locator(".note[data-note='foot']").text_content().startswith("clock rule: a rack shows stale after")
+    assert decide.locator(".note[data-note='foot']").text_content().startswith("clock rule: a bike parking shows stale after")
     decide.click()
     page.wait_for_selector("#flow-detail:has-text('applies the rules')")
     page.click("#flow-detail summary")  # "What happens" is collapsed
@@ -707,8 +708,8 @@ def test_far_destination_says_how_far_and_a_failing_search_keeps_the_rest(server
         desk.route("**/api/geocode*", lambda route: route.fulfill(json=[{"name": "Zurich HB", "lat": 47.378, "lng": 8.540}]))
         desk.fill("#dest-q", "Zurich HB")
         desk.press("#dest-q", "Enter")
-        desk.wait_for_selector("#dest-result:has-text('from the nearest rack')")
-        assert desk.locator("#dest-result").inner_text().endswith(". Zurich HB is 73.4 km from the nearest rack")
+        desk.wait_for_selector("#dest-result:has-text('from the nearest bike parking')")
+        assert desk.locator("#dest-result").inner_text().endswith(". Zurich HB is 73.4 km from the nearest bike parking")
         desk.unroute("**/api/geocode*")
         desk.route("**/api/geocode*", lambda route: route.fulfill(status=502, json={"detail": "x"}))
         desk.fill("#dest-q", "Somewhere")
@@ -1140,7 +1141,7 @@ def test_a_location_is_one_pin_one_entry_and_its_parts_as_rows(server, page):
             assert fresh.locator(".tile[data-rack='Row'] .count__n").inner_text() == "9"
             assert fresh.locator(".tile[data-rack='Row'] .count__of").inner_text() == f"free of {2 * CAPACITY_A}"
             rows = fresh.locator(".tile[data-rack='Row'] .part")
-            assert rows.count() == 2 and rows.locator(".plan").count() == 2 and rows.locator(".plan__entry").count() == 2
+            assert rows.count() == 2 and rows.locator(".plan").count() == 2 and rows.locator(".plan__entry").count() == 0
             assert rows.locator(".part__n").all_inner_texts() == ["9", "?"]  # the free count ends each row, unknown is never free
             assert fresh.locator(".tile[data-rack='Row'] .plan-free").count() == 0
             assert fresh.locator(".leaflet-marker-icon[title='Main row']").count() == 1

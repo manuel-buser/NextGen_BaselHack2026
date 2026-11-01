@@ -229,6 +229,7 @@ class Rack:
         self.vision = vision  # the vision service keeps this rack's camera and decides its spaces (see vision_from_yaml)
         self.vision_seen: str | None = None  # updated_at of the last status taken from the service: a new one is a new frame
         self.vision_state: dict | None = None  # the service's own view of the rack, shown on the admin page
+        self.tracking = True  # False while the vision service has no camera picture: all spaces count as taken, shown grey
         self.group = group  # the location this rack is a part of on the user page, or None: shown on its own
         self.slots: dict[int, Slot] = {}
         self.counts: deque[int] = deque(maxlen=window)  # count mode: free spaces observed
@@ -418,6 +419,7 @@ class Store:
             "demo": all(part.demo for part in loc.parts),
             "layout": None,
             "slots": [],
+            "tracking": all(part.tracking for part in loc.parts),
             "forecast": self.history.forecast(loc, now),
             "parts": parts,
         }
@@ -438,6 +440,7 @@ class Store:
             "source": "demo" if rack.demo else "vision" if rack.vision else "camera",
             "layout": rack.layout,
             "slots": [{"id": sid, "state": slot.state} for sid, slot in sorted(rack.slots.items())],
+            "tracking": rack.tracking,
         }
         if forecast:
             view["forecast"] = self.history.forecast(rack, now)
@@ -469,7 +472,8 @@ class Store:
                 "last_error_at": rack.camera.last_error_at,
                 "error_age_s": age(rack.camera.last_error_at),
                 "online": rack.camera.last_alive_at is not None
-                and now - rack.camera.last_alive_at <= self.settings.stale_after_s,
+                and now - rack.camera.last_alive_at <= self.settings.stale_after_s
+                and rack.tracking,  # a vision rack whose service has no camera picture: the camera is offline
                 "node": {key: getattr(rack.camera, key) for key in NODE_FIELDS},
                 "vision": rack.vision_view(),
             }

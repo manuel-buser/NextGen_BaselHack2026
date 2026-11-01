@@ -272,6 +272,7 @@ def main() -> None:
     with socket.socket() as probe:
         if probe.connect_ex(("127.0.0.1", args.port)) == 0:
             sys.exit(f"Port {args.port} is already in use: stop that program, or pick another port with --port.")
+    os.environ.pop("VIRTUAL_ENV", None)  # another activated venv only makes uv warn; it uses code/app/.venv anyway
     uv, cloudflared = prepare()
     uv_run = [uv, "run", "--no-sync"]  # the checked environment as it is: no installs behind the question's back
     DEPLOY.mkdir(exist_ok=True)
@@ -284,7 +285,8 @@ def main() -> None:
         run(uv_run + ["python", "tools/demo_data.py", "--seed", "--racks", str(racks), "--history", history, "--app", local])
     env = dict(os.environ, BIKESLOT_RACKS=str(racks), CAMERA_PULL="1" if args.live else "0")
     env.setdefault("STALE_AFTER_S", "30")
-    app = uv_run + ["uvicorn", "bikeslot.main:app", "--host", "127.0.0.1", "--port", str(args.port), "--reload", "--reload-include", "*.yaml"]
+    # one argument with "=": on Windows a lone *.yaml is expanded into the file names in code/app
+    app = uv_run + ["uvicorn", "bikeslot.main:app", "--host", "127.0.0.1", "--port", str(args.port), "--reload", "--reload-include=*.yaml"]
     feed = uv_run + ["python", "tools/demo_data.py", "--app", local] + ([] if args.live else ["--feed-real"])
     procs, interrupted = {}, False
     try:
