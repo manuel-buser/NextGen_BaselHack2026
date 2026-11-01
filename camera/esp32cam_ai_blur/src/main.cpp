@@ -41,6 +41,12 @@
 #include "live_page.h"
 
 // Defaults for settings added later (override in config.h)
+#ifndef BLACK_TOP
+#define BLACK_TOP 0.0f          // share of the picture height painted black at the top
+#endif
+#ifndef BLACK_BOTTOM
+#define BLACK_BOTTOM 0.0f       // ... and at the bottom
+#endif
 #ifndef CAMERA_VFLIP
 #define CAMERA_VFLIP 0          // the IDF camera driver already orients the OV3660 correctly
 #endif
@@ -828,6 +834,11 @@ static bool take_shot(Shot &s)
         ESP_LOGE(TAG, "Capture failed");
         return false;
     }
+    // black bars (BLACK_TOP / BLACK_BOTTOM, share of the height): hide lamps etc. in every output
+    const size_t row = static_cast<size_t>(fb->width) * 2;
+    const int top = static_cast<int>(fb->height * BLACK_TOP), bottom = static_cast<int>(fb->height * BLACK_BOTTOM);
+    memset(fb->buf, 0, top * row);
+    memset(fb->buf + (fb->height - bottom) * row, 0, bottom * row);
     blur_people(fb, s);
     const bool ok = frame2jpg(fb, jpeg_quality_100(), &s.jpg, &s.len);
     esp_camera_fb_return(fb);  // the unblurred raw frame is gone from here on
