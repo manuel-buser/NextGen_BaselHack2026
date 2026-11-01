@@ -685,7 +685,7 @@ button { font: inherit; color: inherit; }
 
 /* 11. Rack plan ------------------------------------------------------------ */
 
-.plan-wrap { position: relative; padding-right: 40px; }
+.plan-wrap { position: relative; }
 .plan {
   position: relative;
   display: grid;
@@ -701,20 +701,6 @@ button { font: inherit; color: inherit; }
   position: absolute;
   left: 6px; right: 6px; top: 50%;
   border-top: 1px dashed var(--line-2);
-}
-/* Opening in the frame where the entrance is */
-.plan__door {
-  position: absolute;
-  right: -9px; top: 2px; bottom: 2px;
-  width: 1px;
-  background: var(--page);
-}
-.plan__entry {
-  position: absolute;
-  left: calc(100% + 12px); top: 50%;
-  width: 22px; height: 22px;
-  margin-top: -11px;
-  color: var(--ink-2);
 }
 
 .cell {
@@ -746,10 +732,7 @@ button { font: inherit; color: inherit; }
 .plan--sm { gap: 3px; padding: 5px; border-radius: var(--r-sm); }
 .plan--sm .plan__aisle { height: 10px; }
 .plan--sm .plan__aisle::before { left: 3px; right: 3px; }
-.plan--sm .plan__door { right: -6px; }
 .plan--sm .cell { height: 30px; border-radius: 3px; font-size: 11px; }
-.plan-wrap--sm { padding-right: 26px; }
-.plan-wrap--sm .plan__entry { left: calc(100% + 9px); width: 14px; height: 14px; margin-top: -7px; }
 
 .plan-free { margin: 14px 0 0; font: 400 14px/20px var(--font-text); color: var(--ink-2); }
 .plan-free b { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
@@ -902,7 +885,6 @@ button { font: inherit; color: inherit; }
 .pin-anchor > .pin-tip { bottom: calc(50px + var(--lift, 0px)); }
 .pin-anchor > .mcard { bottom: calc(14px + var(--lift, 0px)); }
 .pin-anchor > .mcard .mcard__stem { height: 14px; }
-.pin__cam { width: 12px; height: 12px; align-self: center; color: var(--accent); }
 .mcard .count { flex-wrap: wrap; }
 .mcard__src { margin-left: auto; }
 /* A location: its racks as stacked rows in the panel and as segments on the map card */
@@ -910,7 +892,6 @@ button { font: inherit; color: inherit; }
 .part { display: grid; grid-template-columns: minmax(0, 1fr) 40px; align-items: center; gap: 8px; }
 .part__n { display: inline-flex; align-items: center; justify-content: flex-end; gap: 4px; font: 700 20px/1 var(--font-display); font-variant-numeric: tabular-nums; color: var(--ink); }
 .part__n--unknown { color: var(--ink-3); }
-.part__cam { width: 12px; height: 12px; color: var(--accent); }
 .segs { display: flex; gap: 3px; }
 .seg {
   flex: 1 1 0; min-width: 0; padding: 4px 0; border-radius: 3px; text-align: center;
@@ -922,18 +903,11 @@ button { font: inherit; color: inherit; }
 
 .chip--real { border-color: var(--accent); background: var(--accent); color: #fff; }
 .chip--real .chip__i { color: #fff; }
+.chip--camoff { border-color: var(--line-2); background: var(--sunken); color: var(--ink-2); }
+.chip--camoff .chip__i { color: var(--ink-3); }
 
 /* Plan cells with no live data, the entrance on either end, racks without a layout */
 .cell--unknown { background: var(--sunken); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--ink-3); }
-.plan-wrap > .plan__entry { left: auto; right: 6px; }
-.plan-wrap--sm > .plan__entry { right: 3px; }
-.plan-wrap--start { padding: 0 0 0 40px; }
-.plan-wrap--start.plan-wrap--sm { padding-left: 26px; }
-.plan-wrap--start > .plan__entry { right: auto; left: 6px; transform: scaleX(-1); }
-.plan-wrap--start.plan-wrap--sm > .plan__entry { left: 3px; }
-.plan-wrap--start .plan__door { right: auto; left: -9px; }
-.plan-wrap--start .plan--sm .plan__door { left: -6px; }
-.plan-wrap--free { padding: 0; }
 .plan-free--quiet { color: var(--ink-3); }
 /* More than 10 spaces in a row: narrower cells, so smaller numbers */
 .plan--dense { gap: 3px; }
@@ -956,7 +930,6 @@ button { font: inherit; color: inherit; }
 .plan-outline-unknown { stroke-dasharray: 3 2; }
 .plan-hatch-fill { fill: var(--taken-bg); }
 .plan-hatch-line { stroke: var(--taken-hatch); stroke-width: 1.5; }
-.plan-entrance { fill: none; stroke: var(--ink-2); stroke-width: 1.6; stroke-opacity: 1; stroke-linecap: round; stroke-linejoin: round; }
 
 /* "Where are you going?": a map control, top right */
 .dest {

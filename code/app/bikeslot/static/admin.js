@@ -45,6 +45,7 @@ const REBOOT_SHOWN_S = 600;
 const signal = (dbm) => (dbm >= -60 ? "excellent" : dbm >= -75 ? "ok" : "weak");
 
 function rackChip(k) {
+  if (k.tracking === false) return chip("critical", "square", "Not live");
   if (k.status === "ok") return chip("good", "dot", "Live");
   if (k.status === "starting") return chip("warning", "half", "Starting");
   if (k.status === "stale") return chip("serious", "tri", "Stale");
@@ -68,7 +69,6 @@ const PULL_HEALTH_S = 5;
 const PULL_PICTURE_S = 10;
 const HOT_LIMIT_C = 75;
 const DETECTOR_TIMEOUT_S = 15;
-const VISION_POLL_S = 3; // VISION_POLL_S of the app, the status does not report it
 
 /* Lanes inside each step, parts in the order they happen: [id, label], a third item true marks a planned part.
    The first lane is the picture lane on the line the arrows use; a quieter second lane runs below it. joins: the side
@@ -105,12 +105,12 @@ const FLOW_PARTS = {
   decide: {
     clock: true,
     lanes: [
-      { tag: "picture", parts: [["discard", "picture deleted"], ["confidence", "confidence rule"], ["window", "picture rule"], ["counts", "free count per rack"], ["history", "history sample"]] },
+      { tag: "picture", parts: [["discard", "picture deleted"], ["confidence", "confidence rule"], ["window", "picture rule"], ["counts", "free count per bike parking"], ["history", "history sample"]] },
     ],
   },
   pages: {
     lanes: [
-      { loop: true, parts: [["racks", "user page asks for the racks"], ["history", "history of the selected rack"], ["user", "shows free spaces"]] },
+      { loop: true, parts: [["racks", "user page asks for the bike parkings"], ["history", "history of the selected bike parking"], ["user", "shows free spaces"]] },
       { loop: true, parts: [["status", "admin page asks for the status"], ["admin", "shows each part's health"]] },
     ],
   },
@@ -152,8 +152,7 @@ function flowNodes(status) {
   const healthModel = d.info.model ?? "unknown";
   const model = r.model ?? healthModel;
   const sources = new Set(real.map((c) => c.source).filter(Boolean));
-  const mode = sources.size >= 2 ? "mixed" : sources.has("pull") ? "pull" : sources.has("push") ? "push" : sources.has("vision") ? "vision" : null;
-  const visionRacks = cams.filter((c) => c.vision);
+  const mode = sources.size === 2 ? "mixed" : sources.has("pull") ? "pull" : sources.has("push") ? "push" : null;
   const readings = [
     temps.length ? `${Math.round(Math.max(...temps))} C` : "",
     signals.length ? `${Math.min(...signals)} dBm` : "",
@@ -162,7 +161,6 @@ function flowNodes(status) {
   const realWords = {
     pull: `pull: the app asks (health ${PULL_HEALTH_S} s, picture ${PULL_PICTURE_S} s)`,
     push: "push: the node posts by itself",
-    vision: "vision service: the laptop keeps the camera, the app reads the decided spaces",
     mixed: real.filter((c) => c.source).map((c) => `${c.rack} ${c.source}`).join(", "),
   };
 
@@ -179,7 +177,6 @@ function flowNodes(status) {
   const howCamera = {
     pull: `The real camera is asked by the app (pull): every ${PULL_HEALTH_S} s for its health (chip temperature, WiFi signal, memory, uptime) and every ${PULL_PICTURE_S} s for a picture, the picture only after a good health answer in the same round.`,
     push: "The real camera posts a picture and an alive message to the app by itself (push).",
-    vision: `The real camera is kept by the vision service on the vision laptop: the service fetches the pictures itself, decides free or taken per hook (slot classifier, smoothed over a few frames) and the app only reads the decided spaces, every ${VISION_POLL_S} s or pushed by the service. No picture reaches the app on this path.`,
     mixed: `Some real cameras are asked by the app (pull: health every ${PULL_HEALTH_S} s, a picture every ${PULL_PICTURE_S} s after a good health answer), others post a picture and an alive message by themselves (push).`,
   };
   return {
@@ -190,26 +187,24 @@ function flowNodes(status) {
           ? ["node posts", ["picture and alive", ""], ["", "node posts a", "picture and alive"]]
           : mode === "mixed"
             ? ["pull and push", ["picture and health", ""], ["", "pull: app asks", "push: node posts"]]
-            : mode === "vision"
-              ? ["decided spaces", ["from the vision service,", "no picture"], ["", "vision service:", "decided spaces"]]
-              : ["picture, health", ["", ""], ["", "picture, health", ""]],
+            : ["picture, health", ["", ""], ["", "picture, health", ""]],
       fake
         ? ["picture", ["to the built-in", "stand-in"], ["", "picture in memory,", "to the stand-in"]]
         : ["picture", ["held in memory", ""], ["", "picture held", "in memory"]],
       ["answer per space", ["taken, free, unsure", "with a confidence"], ["", "taken, free or", "unsure per space"]],
-      ["free per rack", ["user page asks 5 s", "admin page 3 s"], ["free per rack", "user page 5 s,", "admin page 3 s"]],
+      ["free per bike parking", ["user page asks 5 s", "admin page 3 s"], ["free per bike parking", "user page 5 s,", "admin page 3 s"]],
     ],
     camera: {
       state: camera[0],
       label: camera[1],
-      sub: { pull: "ESP32-S3, app asks", push: "ESP32-S3, it posts", vision: "via vision service", mixed: "pull and push" }[mode] ?? "ESP32-S3 board",
+      sub: { pull: "ESP32-S3, app asks", push: "ESP32-S3, it posts", mixed: "pull and push" }[mode] ?? "ESP32-S3 board",
       title: "Camera node (ESP32-S3)",
       text: `${howCamera[mode] ?? "No real camera has been heard from yet."} The heat guard runs on the board: above the hot limit it stops taking pictures. When the node sends no too-hot flag, the app works it out from the temperature (${HOT_LIMIT_C} C).`,
       live: [], // the camera cards above show all of it
       labels: {
         capture: mode === "pull" ? "take picture if health ok" : "take picture",
-        send: { pull: "app fetches it", push: "node posts it", vision: "vision service decides" }[mode] ?? "picture out",
-        alive: { pull: "health answer", push: "alive message", vision: "status answer" }[mode] ?? "health or alive",
+        send: { pull: "app fetches it", push: "node posts it" }[mode] ?? "picture out",
+        alive: { pull: "health answer", push: "alive message" }[mode] ?? "health or alive",
       },
       notes: {
         mode: real.length ? `real camera, ${realWords[mode] ?? "not heard from yet"}` : "no real camera",
@@ -253,8 +248,8 @@ function flowNodes(status) {
       sub: fake ? "built-in stand-in" : "bikes per slot box",
       title: "Detector (recognition service)",
       text: `${fake
-        ? "Built-in stand-in, no recognition: the app is set to use its stand-in for every rack (detector mode fake), so nothing is recognised. The stand-in makes up taken or free per space from the picture's bytes."
-        : `A real rack's picture goes to the recognition service (POST /analyze, ${DETECTOR_TIMEOUT_S} s timeout). It finds bikes with a pre-trained model, matches them to the slot boxes drawn once per camera and answers taken, free or unsure per space with a confidence. People are never reported; blurring them before recognition is being built, not running yet. Demo racks never reach it: the app's built-in stand-in reads their made-up pictures.`} The health check is separate: it runs only when this admin page asks, at most every 5 s. The last error is a status, not a step.${visionRacks.length ? ` Racks with a vision block (${visionRacks.map((c) => c.rack).join(", ")}) never come here either: the vision service on the laptop decides their spaces and the app reads them (see the camera cards).` : ""}`,
+        ? "Built-in stand-in, no recognition: the app is set to use its stand-in for every bike parking (detector mode fake), so nothing is recognised. The stand-in makes up taken or free per space from the picture's bytes."
+        : `A real bike parking's picture goes to the recognition service (POST /analyze, ${DETECTOR_TIMEOUT_S} s timeout). It finds bikes with a pre-trained model, matches them to the slot boxes drawn once per camera and answers taken, free or unsure per space with a confidence. People are never reported; blurring them before recognition is being built, not running yet.`} The health check is separate: it runs only when this admin page asks, at most every 5 s. The last error is a status, not a step.`,
       live: [
         ["Mode", fake ? "fake (built-in stand-in, no recognition)" : esc(d.url)],
         ["Reachable", d.reachable ? "yes" : `<span class="error">no: ${esc(d.error ?? "")}</span>`],
@@ -264,7 +259,7 @@ function flowNodes(status) {
       ],
       notes: {
         mode: fake ? "built-in stand-in, no recognition" : `model: ${short(healthModel, 28)}`,
-        foot: fake ? "every rack gets the stand-in" : "",
+        foot: fake ? "every bike parking gets the stand-in" : "",
         status: `last error: ${r.last_error ? short(r.last_error, 18) : "none"}`,
       },
       parts: {
@@ -284,22 +279,22 @@ function flowNodes(status) {
       label: deciding ? "deciding" : r.last_ok_at ? "idle" : "waiting",
       sub: "drops picture, rules",
       title: "App drops the picture, then applies the rules",
-      text: `In this order. The picture is deleted right after the detector answers (or fails). Then the confidence rule: a free below ${app.min_confidence} confidence, or an unsure, counts as a bike. Then the ${app.free_after_clean}-picture rule: a space shows taken at once, and free only after ${app.free_after_clean} clean pictures in a row. Then the free count per rack, and one history sample per rack per minute (counts only, never which space was used when). Apart from this order, on the clock: a rack without a result for ${stale} s shows stale.`,
+      text: `In this order. The picture is deleted right after the detector answers (or fails). Then the confidence rule: a free below ${app.min_confidence} confidence, or an unsure, counts as a bike. Then the ${app.free_after_clean}-picture rule: a space shows taken at once, and free only after ${app.free_after_clean} clean pictures in a row. Then the free count per bike parking, and one history sample per bike parking per minute (counts only, never which space was used when). Apart from this order, on the clock: a bike parking without a result for ${stale} s shows stale.`,
       live: [
         ["Minimum confidence for free", `${app.min_confidence}`],
         ["Clean pictures before free", `${app.free_after_clean}`],
         ["Stale after", `${stale} s`],
         ["Last decision", ago(r.ok_age_s)],
-        ["Racks live", `${live.length} of ${status.racks.length}`],
+        ["Bike Parkings live", `${live.length} of ${status.racks.length}`],
       ],
       labels: { window: `${app.free_after_clean}-picture rule` },
-      notes: { foot: `clock rule: a rack shows stale after ${stale} s without a result${staleRacks ? `, ${staleRacks} stale now` : ""}` },
+      notes: { foot: `clock rule: a bike parking shows stale after ${stale} s without a result${staleRacks ? `, ${staleRacks} stale now` : ""}` },
       parts: {
         discard: [pictures ? "good" : "muted", `${pictures} deleted, none kept`],
         confidence: [decideState, `free under ${app.min_confidence} or unsure: bike`],
         window: [decideState, `taken at once, free after ${app.free_after_clean} clean`],
-        counts: [pagesState, `${live.length} of ${status.racks.length} racks live`],
-        history: [live.length ? "good" : "muted", "1 per rack per minute"],
+        counts: [pagesState, `${live.length} of ${status.racks.length} bike parkings live`],
+        history: [live.length ? "good" : "muted", "1 per bike parking per minute"],
       },
     },
     pages: {
@@ -307,18 +302,18 @@ function flowNodes(status) {
       label: `${live.length} of ${status.racks.length} live`,
       sub: "user 5 s, admin 3 s",
       title: "Pages",
-      text: "Two loops that run on their own. The user page asks for the racks every 5 seconds, and for the history of the selected rack every 30 seconds. This admin page asks for the status every 3 seconds.",
+      text: "Two loops that run on their own. The user page asks for the bike parkings every 5 seconds, and for the history of the selected bike parking every 30 seconds. This admin page asks for the status every 3 seconds.",
       live: [
-        ["Free spaces now", `${totalFree} (live racks only)`],
-        ["Racks live", `${live.length} of ${status.racks.length}`],
+        ["Free spaces now", `${totalFree} (live bike parkings only)`],
+        ["Bike Parkings live", `${live.length} of ${status.racks.length}`],
         ["Server version", `v${esc(app.version)}`],
       ],
       parts: {
         racks: [live.length ? "good" : "muted", `every 5 s, ${totalFree} free now`],
         history: [live.length ? "good" : "muted", "every 30 s"],
-        user: [pagesState, `${status.racks.length} racks, ${status.racks.filter((k) => k.location).length} on the map`],
+        user: [pagesState, `${status.racks.length} bike parkings, ${status.racks.filter((k) => k.location).length} on the map`],
         status: ["good", `every 3 s, v${app.version}`],
-        admin: ["good", `${cams.length} cameras, ${status.racks.length} racks`],
+        admin: ["good", `${cams.length} cameras, ${status.racks.length} bike parkings`],
       },
     },
   };
@@ -718,39 +713,7 @@ let lastOkAt = null;
 const MORE_ICONS = {
   push: '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M5 9V1.5M2 4.5l3-3 3 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   pull: '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M5 1v7.5M2 5.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  vision: '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 5c1.2-2.2 2.5-3.2 4-3.2S7.8 2.8 9 5c-1.2 2.2-2.5 3.2-4 3.2S2.2 7.2 1 5z" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="5" cy="5" r="1.4" fill="currentColor"/></svg>',
 };
-const PREVIEW_EVERY_S = 3;
-
-/* A rack decided by the vision service: what the service reports for its camera, then the app's own view */
-function visionLine(v, rack) {
-  const where = v.how === "pull" ? `asked every ${v.poll_s} s at ${esc(v.url)}` : "pushed by the service";
-  if (v.updated_at === undefined) return `<b>Vision service</b>, camera ${esc(v.camera)}, ${where}: nothing received yet`;
-  const counts = v.slot_count ? `${v.free} free, ${v.occupied} taken${v.unknown ? `, ${v.unknown} unknown` : ""} of ${v.slot_count} hooks` : "no slot layout on the service yet";
-  const frame = v.frame_age_s === null || v.frame_age_s === undefined ? "no frame yet" : `frame ${ago(v.frame_age_s)}`;
-  const notes = [v.online === false ? "camera offline at the service" : "", v.message, v.warning].filter(Boolean).map(esc).join("; ");
-  const own = rack ? `. App: ${rack.status === "ok" ? `${rack.free} free` : rack.status}, last result ${ago(rack.age_s)}` : "";
-  return `<b>Vision service</b>, camera ${esc(v.camera)}, ${where}: ${counts}, ${frame}${v.processing_ms ? `, ${Math.round(v.processing_ms)} ms` : ""}${notes ? `. ${notes}` : ""}${own}`;
-}
-
-/* The service's last preview (persons blurred there), fetched through the app; the src changes, the img stays */
-function renderPreview(card, c, now) {
-  const box = card.querySelector('[data-f="preview"]');
-  if (!c.vision || !c.vision.preview) {
-    if (box.firstChild) box.innerHTML = "";
-    return;
-  }
-  let img = box.querySelector("img");
-  if (!img) {
-    box.innerHTML = '<img alt="Last picture as the vision service sees it: persons blurred, hooks coloured free or taken" loading="lazy">';
-    img = box.querySelector("img");
-    img._at = 0;
-  }
-  if (now - img._at >= PREVIEW_EVERY_S) {
-    img._at = now;
-    img.src = `/api/vision/${encodeURIComponent(c.rack)}/preview.jpg?t=${Date.now()}`;
-  }
-}
 const icon = (kind, name) => `<i class="ico ico-${kind}">${ICONS[name]}</i>`;
 
 function field(root, name, html) {
@@ -901,8 +864,8 @@ function renderKpis(status) {
   field(t, "sub", `up ${ago(status.app.uptime_s).replace(" ago", "")}`);
   count("cameras", "Cameras online", cams.filter((c) => c.online).length, ` / ${cams.length}`,
     cams.some((c) => c.too_hot) ? `${icon("warning", "tri")}one or more too hot` : "", trends.cameras, cams.length);
-  count("racks", "Racks live", live.length, ` / ${status.racks.length}`, "", trends.racks, status.racks.length);
-  count("free", "Free spaces, live racks", live.reduce((sum, k) => sum + k.free, 0), ` / ${live.reduce((sum, k) => sum + k.capacity, 0)}`, "", trends.free, live.reduce((sum, k) => sum + k.capacity, 0));
+  count("racks", "Bike Parkings live", live.length, ` / ${status.racks.length}`, "", trends.racks, status.racks.length);
+  count("free", "Free spaces, live bike parkings", live.reduce((sum, k) => sum + k.free, 0), ` / ${live.reduce((sum, k) => sum + k.capacity, 0)}`, "", trends.free, live.reduce((sum, k) => sum + k.capacity, 0));
 }
 
 function renderActivity(status) {
@@ -944,7 +907,6 @@ function renderDetector(status) {
   if (!box.dataset.built) {
     box.innerHTML = `<div class="health-head"><p data-f="chip"></p><p class="health-mode" data-f="mode"></p></div>
       <div class="health-facts"><p><span class="k">Model</span><b data-f="model"></b></p><p><span class="k">Last result</span><b data-f="ok"></b></p></div>
-      <p class="health-vision" data-f="vision" hidden></p>
       <div class="health-latency"><p class="k">Latency, last 5 minutes</p><div data-f="spark"></div><p class="health-now" data-f="lat"></p></div>
       <p class="card-error" hidden>${ICONS.square}<span></span></p>`;
     box.dataset.built = "1";
@@ -956,8 +918,6 @@ function renderDetector(status) {
   field(box, "ok", ago(r.ok_age_s));
   field(box, "spark", trendSvg(trends.latency, status.generated_at, ACTIVITY_S, Math.max(10, ...trends.latency.map((p) => p.v)), "Latency, last 5 minutes", " ms"));
   field(box, "lat", r.last_latency_ms === null ? "no call yet" : `last call ${r.last_latency_ms} ms`);
-  const vision = status.cameras.filter((c) => c.vision).map((c) => `${esc(c.rack)}: ${c.vision.how === "pull" ? esc(c.vision.url) : "pushed by the service"}, camera ${esc(c.vision.camera)}, ${c.online ? "answering" : "silent"}`).join("; ");
-  field(box, "vision", vision ? `<span class="k">Vision service (decides its racks on the laptop)</span><br>${vision}` : "").hidden = !vision;
   errorLine(box.querySelector(".card-error"), r.last_error ?? d.error, r.last_error ? r.error_age_s : null);
 }
 
@@ -978,7 +938,6 @@ function cameraSkeleton(c) {
     </div>
     <p class="uptime-text" data-f="uptime"></p>
     <p class="card-detect" data-f="detect"></p>
-    <div class="card-preview" data-f="preview"></div>
     <p class="card-foot"><span data-f="node"></span><span class="tag" data-f="source"></span><span><b class="pictures">0</b> pictures</span><span data-f="seen"></span></p>
     <p class="card-error" hidden>${ICONS.square}<span></span></p>`;
 }
@@ -1032,17 +991,11 @@ function renderCameras(status, rose) {
 
     field(card, "node", esc(c.node_id ?? "unknown node"));
     field(card, "source", c.source ? `${MORE_ICONS[c.source] ?? ""}${esc(c.source)}` : "");
-    card.querySelector('[data-f="source"]').title = c.source === "pull" ? "The server fetches pictures from the node" : c.source === "push" ? "The node sends its pictures"
-      : c.source === "vision" ? "The vision service on the laptop decides the spaces; the app reads them" : "";
     roll(card.querySelector(".pictures"), c.pictures);
     const bytes = c.last_picture_bytes;
     field(card, "seen", `last ${ago(c.picture_age_s)}${bytes ? `, ${bytes < 1024 ? `${bytes} B` : `${Math.round(bytes / 1024)} KB`}` : ""}`);
-    field(card, "detect", c.vision ? visionLine(c.vision, rack) : !rack ? "" : rack.mode === "slots" ? `<b>By space</b>, ${rack.slots_ready} of ${rack.slots_observed} spaces ready, last result ${ago(rack.age_s)}`
+    field(card, "detect", !rack ? "" : rack.mode === "slots" ? `<b>By space</b>, ${rack.slots_ready} of ${rack.slots_observed} spaces ready, last result ${ago(rack.age_s)}`
       : rack.mode === "count" ? `<b>By count</b>, last result ${ago(rack.age_s)}` : "No detection yet");
-    card.querySelector('[data-f="detect"]').title = c.vision
-      ? "What the vision service reports for this rack's camera; the app shows its decided spaces as they are"
-      : `A space is ready once it has a full window of ${status.app.free_after_clean} pictures`;
-    renderPreview(card, c, now);
     errorLine(card.querySelector(".card-error"), c.last_error, c.error_age_s);
     if (rose.has(c.rack)) pulse(card);
   });

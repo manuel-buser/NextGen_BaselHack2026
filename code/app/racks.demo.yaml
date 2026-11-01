@@ -1,4 +1,4 @@
-# Demo with one real camera (A2): the four Peter Merian-Weg sections of racks.yaml plus two made-up racks.
+# Demo with one real camera (A2, through the vision service): the four Peter Merian-Weg sections of racks.yaml plus two made-up racks.
 # A1, A3, A4, B and C are made up and fed by tools/demo_data.py. Start the app with BIKESLOT_RACKS=racks.demo.yaml.
 # A demo: true rack looks like any other on the user page; its pictures always go to the built-in stand-in.
 # B and C have placeholder coordinates and bearings; see racks.yaml for the layout format.
@@ -16,9 +16,9 @@ racks:
     capacity: 19
     location: {lat: 47.546131, lng: 7.593918}
     layout: {rows: 1, cols: 19, bearing: 118, space_m: [0.5, 1.2]}
-    # The node's address changes with the network: check it before the demo. picture_path keeps its default
-    # (/capture) until the node's still-picture path is confirmed. To move the camera, swap this line with a demo line.
-    camera: {url: "http://192.168.21.95", status_path: /health}
+    # The real camera, read through the vision service on this laptop (code/bikeslot): it fetches the pictures,
+    # decides free or occupied per hook and the app reads the result. Without data every hook counts as occupied.
+    vision: {url: "http://127.0.0.1:8002", camera: live01}
   - id: A3
     name: Peter Merian-Weg 3
     group: Peter Merian-Weg
