@@ -146,8 +146,8 @@ off), opens a Cloudflare quick tunnel, opens the link in a new browser window an
 Visitors of the link can only read (see `documentation/CONTRACTS.md`). Logs go to `code/app/.deploy`.
 - Ctrl+C stops the app, the feed and the tunnel. A `git pull` while it runs reloads the app and keeps the link.
 - The link changes at every start: make the QR code for the slides after the final start.
-- `--live`: the real camera feeds its rack, the feed only the demo racks. `--port` (default 8002, the vision
-  service uses 8000), `--racks` (relative to `code/app`).
+- `--live`: the real camera feeds its rack, the feed only the demo racks. `--port` (default 8002, or the next
+  free port above it when another program has 8002), `--racks` (relative to `code/app`).
 - Do not run the Docker app at the same time: both write `data/history.json`.
 
 ## Tests

@@ -146,6 +146,7 @@ class CameraStatus(BaseModel):
     preview_url: Optional[str] = None
     message: str = ""
     source: Optional[dict] = Field(default=None, description="pull mode: the camera / relay as the puller sees it: kind (relay|camera), online, last_seen_s, snapshot_age_s, state, last_error, temperature_c, wifi_rssi_dbm, ...")
+    registration: Optional[dict] = Field(default=None, description="the picture warped onto the layout's reference frame: ok, reason, model, matches, inliers, scale, rotation_deg, shift_px, perspective, ms; null without a reference")
 
 
 class CameraInfo(BaseModel):
