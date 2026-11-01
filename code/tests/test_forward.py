@@ -72,8 +72,8 @@ def test_demo_layout_is_seeded_for_the_live_camera_with_renamed_slot_ids(tmp_pat
 
     store = Store(tmp_path)
     layout = store.seed_layout_file(config.DEMO_LAYOUT, camera_id="live01")
-    assert layout is not None and layout.camera_id == "live01" and len(layout.slots) == 18
-    assert layout.slots[0].slot_id == "live01-S01" and layout.slots[-1].slot_id == "live01-S18"
+    assert layout is not None and layout.camera_id == "live01" and len(layout.slots) == 19
+    assert layout.slots[0].slot_id == "live01-S01" and layout.slots[-1].slot_id == "live01-S19"
     assert layout.params.get("engine") == "classifier" and layout.status == "confirmed"
     assert store.get("live01").layout is layout and store.get("demo01") is None
     assert not (tmp_path / "layouts" / "live01.json").exists()   # seeded in memory only; an admin layout would be saved

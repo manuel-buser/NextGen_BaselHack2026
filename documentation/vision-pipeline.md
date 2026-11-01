@@ -109,10 +109,16 @@ the first calibration can take ~30 s if it is not ready yet, later ones take 1â€
 # docs: http://127.0.0.1:8000/docs   debug view: http://127.0.0.1:8000/
 # showcase: http://127.0.0.1:8000/demo  (live camera + annotated golden and auto-calibrated examples)
 
-# live camera: the service polls http://192.168.21.95/snapshot itself as camera live01 (pull mode).
-# Change/disable with BIKESLOT_PULL_CAMERAS="live01=http://<ip>/snapshot,cam02=http://<ip2>/snapshot" (or "")
-# and BIKESLOT_PULL_INTERVAL=5, or at runtime: PUT /cameras/live01/source?url=http://<ip>/snapshot
-# pull state (frames, errors, last fetch) is in GET /health under "pull".
+# live camera: the service polls the snapshot itself as camera live01 (pull mode): from the relay the camera pushes
+# to over the phone hotspot (relay/README.md), or from the camera on the LAN. Address and view key in .env:
+#   BIKESLOT_PULL_CAMERAS="live01=https://relay.manuel-buser.com/snapshot"   BIKESLOT_PULL_VIEW_KEY=<view key>
+#   (LAN: BIKESLOT_PULL_CAMERAS="live01=http://192.168.21.95/snapshot", no key; several: "a=...,b=..."; "" = off)
+# The puller sends If-None-Match (304 = nothing new, not processed again), skips pictures older than
+# BIKESLOT_PULL_MAX_AGE_S (60 s), tells the relay's 404 (nothing from the camera yet) from 401 (wrong key), and
+# reads /health next to /snapshot: the camera's status then carries "source" (relay online / last seen, the
+# camera's temperature and wifi) and turns "online": false as soon as the relay has not heard from the camera
+# (30 s) or its newest picture is too old, so the app never shows an old picture as free hooks.
+# Runtime: PUT /cameras/live01/source?url=...   State per camera: GET /health under "pull" (key masked).
 
 # fake camera: loop the golden images into cam01 every 3 s
 .venv/Scripts/python code/scripts/replay.py --camera cam01 --source assets/pictures/GoldenDataSet --interval 3 --loop
