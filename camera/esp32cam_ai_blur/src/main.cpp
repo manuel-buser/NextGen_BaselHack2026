@@ -19,7 +19,9 @@
 #include "driver/temperature_sensor.h"
 #include "esp_camera.h"
 #include "esp_event.h"
+#include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
+#include "esp_http_client.h"
 #include "esp_system.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -968,7 +970,29 @@ static const char *reset_reason_name(esp_reset_reason_t r)
     }
 }
 
-static esp_err_t health_handler(httpd_req_t *req)
+// ---- relay push settings (config.h): RELAY_URL empty = push disabled ----
+#ifndef RELAY_URL
+#define RELAY_URL ""
+#endif
+#ifndef CAMERA_ID
+#define CAMERA_ID "cam01"
+#endif
+#ifndef UPLOAD_TOKEN
+#define UPLOAD_TOKEN ""
+#endif
+#ifndef SNAPSHOT_INTERVAL_S
+#define SNAPSHOT_INTERVAL_S 10
+#endif
+#ifndef HEALTH_INTERVAL_S
+#define HEALTH_INTERVAL_S 10
+#endif
+
+static std::atomic<uint32_t> s_push_ok{0}, s_push_failed{0};
+static std::atomic<int64_t> s_last_push_ok_us{0};   // time of the last successful push (0 = never)
+static std::atomic<int32_t> s_last_push_ms{-1};     // duration of the last snapshot push
+
+// The camera's health as JSON: served on GET /health and pushed to the relay
+static void build_health_json(char *json, size_t size)
 {
     const int64_t now = esp_timer_get_time();
 
@@ -994,16 +1018,19 @@ static esp_err_t health_handler(httpd_req_t *req)
         snprintf(channel, sizeof(channel), "%d", ap.primary);
     }
 
-    char json[768];
-    snprintf(json, sizeof(json),
-             "{\"uptime_s\":%lld,\"reset_reason\":\"%s\",\"temperature_c\":%s,"
+    char push_age[16] = "null";
+    if (s_last_push_ok_us.load()) snprintf(push_age, sizeof(push_age), "%lld", (now - s_last_push_ok_us.load()) / 1000000);
+
+    snprintf(json, size,
+             "{\"camera_id\":\"%s\",\"uptime_s\":%lld,\"reset_reason\":\"%s\",\"temperature_c\":%s,"
              "\"snapshots_taken\":%lu,\"snapshots_failed\":%lu,\"snapshots_served\":%lu,"
              "\"last_snapshot_age_s\":%s,\"last_detect_ms\":%lld,\"last_people\":%d,\"last_plates\":%d,"
              "\"heap_free\":%u,\"heap_min_free\":%u,\"heap_largest_block\":%u,"
              "\"psram_free\":%u,\"psram_total\":%u,"
              "\"wifi_connected\":%s,\"wifi_ssid\":\"%s\",\"wifi_rssi_dbm\":%s,\"wifi_channel\":%s,"
-             "\"ip\":\"" IPSTR "\",\"autotune\":%s}",
-             now / 1000000, reset_reason_name(esp_reset_reason()), temp,
+             "\"ip\":\"" IPSTR "\",\"autotune\":%s,"
+             "\"relay\":%s,\"pushes_ok\":%lu,\"pushes_failed\":%lu,\"last_push_age_s\":%s,\"last_push_ms\":%ld}",
+             CAMERA_ID, now / 1000000, reset_reason_name(esp_reset_reason()), temp,
              (unsigned long)s_shots_taken.load(), (unsigned long)s_shots_failed.load(),
              (unsigned long)s_shots_served.load(), last_age, last ? last->detect_ms : 0LL,
              last ? last->people : 0, last ? last->plates : 0,
@@ -1013,11 +1040,123 @@ static esp_err_t health_handler(httpd_req_t *req)
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
              (unsigned)heap_caps_get_total_size(MALLOC_CAP_SPIRAM),
              connected ? "true" : "false", s_nets[s_net].ssid, rssi, channel, IP2STR(&s_ip),
-             autotune::enabled ? "true" : "false");
+             autotune::enabled ? "true" : "false", RELAY_URL[0] ? "true" : "false",
+             (unsigned long)s_push_ok.load(), (unsigned long)s_push_failed.load(), push_age,
+             (long)s_last_push_ms.load());
+}
+
+static esp_err_t health_handler(httpd_req_t *req)
+{
+    char json[1024];
+    build_health_json(json, sizeof(json));
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     return httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
+}
+
+// ---- relay push: camera -> phone hotspot -> internet -> relay (HTTPS) ----
+// Every SNAPSHOT_INTERVAL_S the latest blurred picture, every HEALTH_INTERVAL_S the health JSON.
+// One kept-alive HTTPS connection (the TLS handshake costs ~1 s, so it is reused); on any error it
+// is dropped and rebuilt on the next push. No queue: a failed push is simply replaced by the next
+// one, pictures are never stored on the camera.
+
+static esp_http_client_handle_t s_relay = nullptr;
+
+static void relay_close()
+{
+    if (s_relay) {
+        esp_http_client_cleanup(s_relay);
+        s_relay = nullptr;
+    }
+}
+
+// POST body to RELAY_URL + path. Returns true on HTTP 2xx.
+static bool relay_post(const char *path, const char *content_type, const char *body, size_t len,
+                       const Shot *shot = nullptr)
+{
+    char url[160];
+    snprintf(url, sizeof(url), "%s%s", RELAY_URL, path);
+    if (!s_relay) {
+        esp_http_client_config_t cfg = {};
+        cfg.url = url;
+        cfg.method = HTTP_METHOD_POST;
+        cfg.timeout_ms = 10000;              // mobile network: allow for slow moments
+        cfg.keep_alive_enable = true;
+        cfg.crt_bundle_attach = esp_crt_bundle_attach;  // verify the relay's certificate (public CAs)
+        s_relay = esp_http_client_init(&cfg);
+        if (!s_relay) return false;
+    } else {
+        esp_http_client_set_url(s_relay, url);
+    }
+    esp_http_client_set_method(s_relay, HTTP_METHOD_POST);
+    esp_http_client_set_header(s_relay, "Content-Type", content_type);
+    esp_http_client_set_header(s_relay, "X-Camera-Id", CAMERA_ID);
+    esp_http_client_set_header(s_relay, "X-Upload-Token", UPLOAD_TOKEN);
+    char people[8] = "", plates[8] = "", ms[16] = "";
+    if (shot) {
+        snprintf(people, sizeof(people), "%d", shot->people);
+        snprintf(plates, sizeof(plates), "%d", shot->plates);
+        snprintf(ms, sizeof(ms), "%lld", shot->detect_ms);
+        esp_http_client_set_header(s_relay, "X-People-Blurred", people);
+        esp_http_client_set_header(s_relay, "X-Plates-Blurred", plates);
+        esp_http_client_set_header(s_relay, "X-Detect-Ms", ms);
+    } else {
+        esp_http_client_delete_header(s_relay, "X-People-Blurred");
+        esp_http_client_delete_header(s_relay, "X-Plates-Blurred");
+        esp_http_client_delete_header(s_relay, "X-Detect-Ms");
+    }
+    esp_http_client_set_post_field(s_relay, body, static_cast<int>(len));
+
+    const esp_err_t err = esp_http_client_perform(s_relay);
+    const int status = err == ESP_OK ? esp_http_client_get_status_code(s_relay) : 0;
+    const bool ok = status >= 200 && status < 300;
+    if (ok) {
+        s_push_ok++;
+        s_last_push_ok_us = esp_timer_get_time();
+    } else {
+        s_push_failed++;
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "Relay %s failed: %s (internal RAM free %u, largest block %u)", path, esp_err_to_name(err),
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+        }
+        else ESP_LOGW(TAG, "Relay %s answered HTTP %d%s", path, status, status == 401 ? " (check UPLOAD_TOKEN)" : "");
+        relay_close();  // start with a fresh connection next time
+    }
+    return ok;
+}
+
+static void relay_task(void *)
+{
+    int64_t next_snapshot = 0, next_health = 0;
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        if (!(xEventGroupGetBits(s_wifi_events) & WIFI_CONNECTED)) {
+            relay_close();
+            continue;
+        }
+        const int64_t now = esp_timer_get_time();
+        if (now >= next_snapshot) {
+            next_snapshot = now + SNAPSHOT_INTERVAL_S * 1000000LL;
+            ShotPtr sh = get_shot(1500);  // reuse the live view's picture if it is fresh
+            if (sh) {
+                const int64_t t0 = esp_timer_get_time();
+                if (relay_post("/ingest/snapshot", "image/jpeg", reinterpret_cast<const char *>(sh->jpg), sh->len,
+                               sh.get())) {
+                    s_last_push_ms = static_cast<int32_t>((esp_timer_get_time() - t0) / 1000);
+                    ESP_LOGI(TAG, "Snapshot -> relay: %u KB, %d people + %d plates blurred (%ld ms)",
+                             (unsigned)(sh->len / 1024), sh->people, sh->plates, (long)s_last_push_ms.load());
+                }
+            }
+        }
+        if (now >= next_health) {
+            next_health = now + HEALTH_INTERVAL_S * 1000000LL;
+            char json[1024];
+            build_health_json(json, sizeof(json));
+            relay_post("/ingest/health", "application/json", json, strlen(json));
+        }
+    }
 }
 
 // ---- camera settings: same interface as Espressif's CameraWebServer (/status, /control) ----
@@ -1165,6 +1304,14 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "[%lld ms] Ready", ms_now());
     web_start();
     xTaskCreatePinnedToCore(live_task, "live", 16384, nullptr, 4, nullptr, 1);
+    if (RELAY_URL[0]) {
+        // TLS needs a big stack; the detector may also run in here when no fresh picture exists
+        xTaskCreatePinnedToCore(relay_task, "relay", 20480, nullptr, 3, nullptr, 0);
+        ESP_LOGI(TAG, "Pushing to relay %s as %s (snapshot every %d s, health every %d s)", RELAY_URL, CAMERA_ID,
+                 SNAPSHOT_INTERVAL_S, HEALTH_INTERVAL_S);
+    } else {
+        ESP_LOGI(TAG, "RELAY_URL not set: no push, pull mode only");
+    }
 
     // Pull mode only: the server fetches GET /snapshot. Repeat the address now and then,
     // because USB serial often misses the boot messages.

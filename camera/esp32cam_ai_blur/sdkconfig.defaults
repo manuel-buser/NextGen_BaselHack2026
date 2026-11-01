@@ -25,3 +25,7 @@ CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
 
 # Model compiled into the firmware image
 CONFIG_PEDESTRIAN_DETECT_MODEL_IN_FLASH_RODATA=y
+
+# HTTPS to the relay: mbedTLS buffers (~20 KB per connection) go to PSRAM. In internal RAM
+# they don't fit next to the detector: mbedtls_ssl_setup fails with -0x008D (out of memory).
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
