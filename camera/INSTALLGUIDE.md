@@ -132,10 +132,19 @@ curl -o img.jpg http://<camera-ip>/snapshot
 
 ### How pictures reach the server
 
-The ESP32 only takes, auto-tunes and blurs the picture. Bike and slot detection runs in the Python
-server (`code/`) on a laptop, which fetches `http://<camera-ip>/snapshot` on a timer (pull mode,
-configured in `code/bikeslot/config.py` as `PULL_CAMERAS`). The camera never sends anything on its
-own.
+The ESP32 only takes, auto-tunes and blurs the picture. Two ways to get it out:
+
+- **Pull (same Wi-Fi):** the server in `code/` fetches `http://<camera-ip>/snapshot` on a timer
+  (`PULL_CAMERAS` in `code/bikeslot/config.py`). Works when the laptop is on the camera's network.
+- **Push via relay (any distance, e.g. phone hotspot):** set `RELAY_URL` and `UPLOAD_TOKEN` in
+  `config.h`. The camera then posts its latest picture every `SNAPSHOT_INTERVAL_S` and its health
+  every `HEALTH_INTERVAL_S` over HTTPS to the relay in the cloud (`relay/`, see
+  `relay/README.md`). Anyone with the view key opens `https://<relay>/?key=...`. Log line per
+  upload: `Snapshot -> relay: 46 KB, 1 people + 0 plates blurred (240 ms)`. `/health` shows
+  `pushes_ok`, `pushes_failed` and `last_push_ms`.
+
+For a phone hotspot: set the hotspot to **2.4 GHz** (the ESP32 can't see 5 GHz), turn off its
+auto-off timeout, exempt it from battery saver, and put it first in `WIFI_NETWORKS`.
 
 Note: `code/app/bikeslot/state.py` and `code/app/tools/fake_node.py` still use `/capture`; change
 them to `/snapshot` if you use that app.
