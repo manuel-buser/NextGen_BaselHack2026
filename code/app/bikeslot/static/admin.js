@@ -990,7 +990,11 @@ function renderCameras(status, rose) {
     field(card, "uptime", up === null ? "Uptime not reported" : `Up ${ago(up).replace(" ago", "")}${rebooted ? `, <b>restarted</b> ${ago(now - n.rebooted_at)}` : ""}`);
 
     field(card, "node", esc(c.node_id ?? "unknown node"));
-    field(card, "source", c.source ? `${MORE_ICONS[c.source] ?? ""}${esc(c.source)}` : "");
+    const src = c.vision?.source;   // the vision service's view of its picture source (relay or camera)
+    const relay = !src ? "" : src.online === false ? `camera silent${src.last_seen_s != null ? ` for ${Math.round(src.last_seen_s)} s` : ""}`
+      : src.state === "stale" ? "old picture at the relay" : src.state === "waiting" ? "no picture at the relay yet"
+      : `${src.kind === "relay" ? "via relay" : "direct"}${src.last_seen_s != null ? `, camera seen ${Math.round(src.last_seen_s)} s ago` : ""}`;
+    field(card, "source", c.source ? `${MORE_ICONS[c.source] ?? ""}${esc(c.source)}${relay ? ` (${esc(relay)})` : ""}` : "");
     roll(card.querySelector(".pictures"), c.pictures);
     const bytes = c.last_picture_bytes;
     field(card, "seen", `last ${ago(c.picture_age_s)}${bytes ? `, ${bytes < 1024 ? `${bytes} B` : `${Math.round(bytes / 1024)} KB`}` : ""}`);

@@ -158,6 +158,13 @@ The fields the app reads:
   the app last saw them. A rack without a new decided frame for `STALE_AFTER_S` shows "stale".
 - Slot indexes outside 1..capacity, or a slot count that differs from the capacity, are shown as an error on the
   admin page; the fitting slots are still applied.
+- `online: false` (the service has no recent picture: the camera stopped sending, the relay reports it offline or
+  holds only an old picture) and a `frame_age_s` above `STALE_AFTER_S` both make every space count as occupied
+  and the rack show as not tracked live, whatever `slots` says: an old picture is never shown as free spaces.
+- `source` (optional) is what the service knows about where its pictures come from: `kind` (`relay` or
+  `camera`), `online`, `last_seen_s`, `snapshot_age_s`, `state` (`ok`, `not_modified`, `waiting`, `stale`,
+  `error`), `last_error`, and the camera's `temperature_c`, `wifi_rssi_dbm`, `wifi_connected`, `uptime_s`. The
+  admin page shows them on the camera card (temperature gauge, WiFi bars, uptime, relay line).
 - Other fields of the status are ignored. Nothing about a person is in it; the service blurs persons in its own
   preview before the app can fetch it.
 

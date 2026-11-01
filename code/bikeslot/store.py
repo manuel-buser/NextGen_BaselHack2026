@@ -55,6 +55,7 @@ class Store:
         for d in (self.layout_dir, self.history_dir, self.preview_dir):
             d.mkdir(parents=True, exist_ok=True)
         self.cameras: dict[str, CameraState] = {}
+        self.sources: dict[str, dict] = {}   # camera_id -> what the puller knows about its picture source (pull.py)
         self.lock = threading.RLock()
         self.load_layouts()
 
@@ -174,19 +175,40 @@ class Store:
         with open(self.history_dir / f"{cam.camera_id}.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(line) + "\n")
 
+    def note_source(self, camera_id: str, source: dict) -> None:
+        """The puller reports what it learned about the camera / relay (pull.Puller.source_info)."""
+        self.sources[camera_id] = source
+
+    def _offline_reason(self, cam: CameraState) -> Optional[str]:
+        """Why the camera counts as offline: no recent frame here, the relay has not heard from it, or the newest
+        picture it holds is too old. None while it is online."""
+        src = self.sources.get(cam.camera_id) or {}
+        if src.get("online") is False:
+            seen = src.get("last_seen_s")
+            return (f"camera offline (nothing new at the relay for {seen:.0f} s)" if isinstance(seen, (int, float))
+                    else "camera offline (nothing at the relay yet)")
+        if src.get("state") == "stale":
+            return f"camera offline ({src.get('last_error') or 'the newest picture is too old'})"
+        if not cam.online:
+            return "camera offline (no recent frame)"
+        return None
+
     def current_status(self, cam: CameraState) -> CameraStatus:
         """Latest status with freshness fields recomputed."""
+        reason = self._offline_reason(cam)
+        source = self.sources.get(cam.camera_id)
         if cam.last_status is None:
-            return CameraStatus(camera_id=cam.camera_id, site_id=cam.layout.site_id, online=cam.online,
+            return CameraStatus(camera_id=cam.camera_id, site_id=cam.layout.site_id, online=reason is None,
                                layout_status=cam.layout.status, occupancy_mode=cam.layout.occupancy_mode,
-                               slot_count=len(cam.layout.slots), unknown=len(cam.layout.slots),
-                               message="no frame received yet")
+                               slot_count=len(cam.layout.slots), unknown=len(cam.layout.slots), source=source,
+                               message="no frame received yet" + (f" | {reason}" if reason else ""))
         st = cam.last_status.model_copy()
-        st.online = cam.online
+        st.online = reason is None
         st.frame_age_s = round((utcnow() - cam.last_frame_at).total_seconds(), 1) if cam.last_frame_at else None
         st.preview_url = f"/cameras/{cam.camera_id}/preview.jpg" if cam.preview_jpeg else None
-        if not st.online:
-            st.message = (st.message + " | " if st.message else "") + "camera offline (no recent frame)"
+        st.source = source
+        if reason:
+            st.message = (st.message + " | " if st.message else "") + reason
         return st
 
     def sites(self) -> list[SiteSummary]:

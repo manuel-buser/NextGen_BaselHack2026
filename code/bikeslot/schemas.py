@@ -145,6 +145,7 @@ class CameraStatus(BaseModel):
     processing_ms: float = 0.0
     preview_url: Optional[str] = None
     message: str = ""
+    source: Optional[dict] = Field(default=None, description="pull mode: the camera / relay as the puller sees it: kind (relay|camera), online, last_seen_s, snapshot_age_s, state, last_error, temperature_c, wifi_rssi_dbm, ...")
 
 
 class CameraInfo(BaseModel):
