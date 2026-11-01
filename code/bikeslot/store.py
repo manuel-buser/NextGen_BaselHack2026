@@ -1,7 +1,8 @@
 """In-memory camera state + on-disk layouts/history/previews.
 
 Privacy: raw frames live only in a small RAM ring buffer per camera (for calibration); nothing raw is
-ever written to disk.  Only layouts, per-slot status history and blurred previews are persisted.
+ever written to disk.  Only layouts, the features of their reference frame (positions + descriptors, no
+pixels), per-slot status history and blurred previews are persisted.
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ import numpy as np
 from . import config
 from .geometry import normalize, row_from_polygons, slots_from_rows
 from .occupancy import SlotMaskCache, SlotTracker, make_trackers
+from .registration import Reference
 from .schemas import (CameraInfo, CameraStatus, Detection, Layout, LayoutUpdate, SiteCamera, SiteSummary,
                       Slot, utcnow)
 
@@ -34,6 +36,9 @@ class CameraState:
     last_detections: list[Detection] = field(default_factory=list)
     preview_jpeg: Optional[bytes] = None
     calibration_jpeg: Optional[bytes] = None
+    last_raw: Optional[np.ndarray] = None          # newest picture as received (RAM only), for PUT .../reference?latest
+    reference: Optional[Reference] = None          # features of the frame the layout was drawn on (registration.py)
+    reg_failures: int = 0                          # pictures in a row that could not be warped onto the reference
 
     def reset_trackers(self) -> None:
         self.trackers = make_trackers(self.layout)
@@ -91,7 +96,24 @@ class Store:
             cam.layout = layout
             cam.reset_trackers()
             n += 1
+        for path in sorted(self.layout_dir.glob("*.ref.npz")):
+            try:
+                self.get_or_create(path.name[:-len(".ref.npz")]).reference = Reference.load(path)
+            except Exception as exc:
+                print(f"[store] skipping {path.name}: {exc}")
         return n
+
+    def set_reference(self, camera_id: str, ref: Optional[Reference]) -> None:
+        """Store (or with None forget) the reference frame features the camera's pictures are warped onto."""
+        path = self.layout_dir / f"{camera_id}.ref.npz"
+        with self.lock:
+            cam = self.get_or_create(camera_id)
+            cam.reference = ref
+            cam.reg_failures = 0
+            if ref is None:
+                path.unlink(missing_ok=True)
+            else:
+                ref.save(path)
 
     def save_layout(self, layout: Layout) -> None:
         path = self.layout_dir / f"{layout.camera_id}.json"

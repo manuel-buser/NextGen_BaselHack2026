@@ -80,6 +80,22 @@ BLUR_VAR_MIN = _env("BLUR_VAR_MIN", 30.0)       # Laplacian variance below this 
 OFFLINE_AFTER_S = _env("OFFLINE_AFTER_S", 60.0)
 RING_BUFFER = _env("RING_BUFFER", 10)           # raw frames kept in RAM per camera (calibration)
 
+# --- registration (registration.py): warp each picture onto the reference frame of its layout ----------------
+# Limits measured on the 2026-11-01 night frames of live01: the rack registered with 55-121 agreeing matches,
+# scale 0.87-1.15, rotation <= 7 deg, perspective <= 0.0005; other scenes gave <= 7 matches and rotations of 60+ deg.
+REGISTRATION = _env("REGISTRATION", True)             # use a camera's reference (data/layouts/<id>.ref.npz) if it has one
+REG_WORK_WIDTH = _env("REG_WORK_WIDTH", 320)          # features are found at this width only: half the 640 px camera picture
+REG_FEATURES = _env("REG_FEATURES", 3000)
+REG_RATIO = _env("REG_RATIO", 0.8)                    # Lowe ratio test for a descriptor match
+REG_RANSAC_PX = _env("REG_RANSAC_PX", 3.0)            # RANSAC reprojection threshold, reference pixels
+REG_MIN_INLIERS = _env("REG_MIN_INLIERS", 15)
+REG_MIN_SCALE = _env("REG_MIN_SCALE", 0.6)
+REG_MAX_SCALE = _env("REG_MAX_SCALE", 1.6)
+REG_MAX_ROTATION_DEG = _env("REG_MAX_ROTATION_DEG", 25.0)
+REG_MAX_PERSPECTIVE = _env("REG_MAX_PERSPECTIVE", 0.002)  # |h31|, |h32| per pixel of the reference
+REG_MIN_COVERAGE = _env("REG_MIN_COVERAGE", 0.9)      # a slot less visible than this after warping gets no vote
+REG_FAIL_RESET = _env("REG_FAIL_RESET", 3)            # this many unaligned pictures in a row -> every slot unknown
+
 # --- calibration -------------------------------------------------------------
 STAND_MODEL = _env("STAND_MODEL", "yoloe-11l-seg.pt")   # open-vocabulary model for rack stands (calibration only)
 STAND_CONF = _env("STAND_CONF", 0.3)                    # visual-prompt confidence to accept a stand

@@ -50,6 +50,8 @@ def render(frame: np.ndarray, status: CameraStatus, dets: list[Detection], assig
             tag = f"{d.name[:3]} {d.conf:.2f}" + (f" -> {assignments[i][-3:]}" if assignments and i in assignments else "")
             cv2.putText(img, tag, (x1, max(12, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
     banner = f"{status.camera_id}  free {status.free}/{status.slot_count}" + ("  (estimated)" if status.estimated else "")
+    if status.registration:
+        banner += "  aligned" if status.registration.get("ok") else "  NOT ALIGNED"
     if status.message:
         banner += f"  | {status.message[:60]}"
     cv2.rectangle(img, (0, 0), (img.shape[1], 24), (0, 0, 0), -1)
