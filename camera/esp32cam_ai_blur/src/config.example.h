@@ -21,5 +21,5 @@
 #define RELAY_URL            "https://bikeslot-relay.onrender.com"
 #define UPLOAD_TOKEN         "paste-UPLOAD_TOKEN-from-the-relay"
 #define CAMERA_ID            "cam01"      // 1-32 characters: A-Z a-z 0-9 _ -
-#define SNAPSHOT_INTERVAL_S  10           // ~16 MB mobile data per hour at 10 s
+#define SNAPSHOT_INTERVAL_S  10           // ~16 MB mobile data per hour at 10 s; 2 s = fresher, ~90 MB/h
 #define HEALTH_INTERVAL_S    10
