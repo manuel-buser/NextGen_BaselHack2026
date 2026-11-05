@@ -37,9 +37,15 @@ We explore a digital, physical, or combined solution that makes bicycle parking 
 
 ## Repository structure
 
-- `code/`: all code (firmware, image recognition, web/mobile interface)
-- `documentation/`: diagrams, architecture, code-related docs
-- `assets/`: videos, presentations, images
+- `camera/`: ESP32 camera firmware (blurs people and plates on the chip) and its install/run guides
+- `relay/`: small cloud relay; the camera pushes snapshots to it over a phone hotspot, the vision service and browsers read them
+- `code/bikeslot/`: vision service (bike detection, slot occupancy, calibration, slot classifier)
+- `code/app/`: web app (user map, admin page)
+- `code/scripts/`, `code/tests/`: tooling (replay, training, benchmarks) and tests for the vision service
+- `documentation/`: architecture, interfaces, demo runbook
+- `assets/`: sample pictures (golden data set, demo frames) and the small slot-classifier model
+
+Faces and licence plates in the published pictures are blurred.
 
 ## Solution
 
@@ -65,6 +71,14 @@ Persons and licence plates are blurred before anything is shown or uploaded; raw
 # http://127.0.0.1:8000/docs  (API)   http://127.0.0.1:8000/  (debug view)
 .venv/Scripts/python code/scripts/replay.py --camera cam01 --source assets/pictures/GoldenDataSet --interval 3 --loop
 ```
+
+## Note on the repository history
+
+This repository was re-created on 2026-11-05 for privacy reasons. Before keeping it public, we blurred the
+faces and the licence plate visible in the sample photos and removed a set of site photos showing people
+from the git history. Re-creating the repository was the only way to make sure no copy of the old pictures
+stays reachable on GitHub. Nothing else changed: the code and its full commit history are kept, and the three
+pull requests of the original repository (#1–#3) were all merged and are part of `main`.
 
 ## License
 

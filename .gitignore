@@ -1,49 +1,51 @@
+# Python
 .venv/
-__pycache__/
-*.pyc
-*.pt
-runs/
-# Annotated outputs may show people or licence plates - keep them local
-data/
-
-# Python environments and libraries (~1.2 GB, reinstalled with pip / uv)
 venv/
 env/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node
 node_modules/
+
+# Editor settings
+.vscode/
+
+# Logs
+*.log
+
+# API keys and camera Wi-Fi settings - never commit
+.env
+camera/**/config.h
 
 # PlatformIO / ESP-IDF build output and downloaded libraries (recreated by the build)
 .pio/
 managed_components/
 sdkconfig.*
 !sdkconfig.defaults
-*.log
 
-# Camera settings with Wi-Fi passwords - copy config.example.h to config.h locally
-camera/**/config.h
-
-# Editor settings
-.vscode/
-
-# Reference photos and field tests show people or licence plates - keep them local
-Proton Drive Download*/
-live_data/
-
-# Endress site photos may show people or licence plates - keep them local
-assets/pictures/EndressPictures/
-
-# API keys - never commit
-.env
-
-# YOLOE text encoder (downloaded by ultralytics)
-mobileclip*.ts
-# unfinished downloads of model files
+# Model weights: downloaded by ultralytics or trained locally; only the small demo head is shipped
+*.pt
 *.part
-
-# Models
+mobileclip*.ts
+runs/
+weights/
 assets/models/*
+!assets/models/slotcls_demo.pth
 
-# Training data
+# Pictures: only the published, privacy-checked sets are tracked (faces and licence plates blurred).
+# Site photos, field tests and training data may show people or licence plates - keep them local.
 assets/pictures/*
+!assets/pictures/DemoPictures/
+!assets/pictures/GeneratedByChatGPT/
+!assets/pictures/GeneratedByGemini/
+!assets/pictures/GoldenDataSet/
+!assets/pictures/Selfmade/
+data/
+live_data/
+Proton Drive Download*/
+* - Copy.*
 
-# Personal working notes (not shared)
+# Personal working notes
 my_docs/
